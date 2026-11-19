@@ -1,0 +1,12 @@
+langgraph>=1.0
+langgraph-checkpoint-postgres>=3.0
+langchain-core>=1.0
+langchain-openai>=1.0
+psycopg[binary,pool]>=3.2
+python-telegram-bot>=21.0
+yfinance>=0.2.40
+pandas>=2.0
+numpy>=1.26
+pydantic>=2.7
+pydantic-settings>=2.4
+python-dotenv>=1.0
