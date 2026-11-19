@@ -62,7 +62,7 @@ async def test_wrong_side_vetoed(monkeypatch):
         action="BUY", confidence=70, entry=1.1000, stop_loss=1.1010, take_profit=1.0990,
     ))
     assert out["decision"]["action"] == "NO_TRADE"
-    assert any("wrong side" in v for v in out["vetoes"])
+    assert any("sisi yang salah" in v for v in out["vetoes"])
 
 
 @pytest.mark.asyncio
@@ -79,5 +79,5 @@ def test_render_escapes_html():
                              "reasons": ["<script>"], "vetoes": []})
     text = render(state)
     assert "<script>" not in text
-    assert "NO_TRADE" in text
+    assert "TIDAK ENTRY" in text
     assert "m15" in text and "m5" in text and "m1" in text

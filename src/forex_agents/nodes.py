@@ -15,6 +15,12 @@ from .timeframes import PIP, cascade
 
 log = logging.getLogger(__name__)
 
+# Semua teks yang dilihat pengguna harus Bahasa Indonesia; kunci JSON tetap Inggris.
+_LANG = (
+    "\n\nTulis semua teks bebas (rationale, pattern, why, entry_trigger, reasons, vetoes) "
+    "dalam Bahasa Indonesia yang ringkas. Kunci JSON dan nilai enum tetap Bahasa Inggris."
+)
+
 _TREND_SYS = """You are a senior FX top-down analyst. Judge ONLY the higher-timeframe trend.
 Rules:
 - Use the numeric snapshot given. Do not invent prices.
@@ -90,9 +96,9 @@ async def trend_node(state: AnalysisState) -> dict:
     snap = state["snapshots"].get(state["trend_tf"])
     if not snap:
         return {"trend": {"bias": "range", "strength": "weak", "key_levels": [],
-                          "rationale": "no data"}, "errors": [f"trend {state['trend_tf']}: no data"]}
+                          "rationale": "tidak ada data"}, "errors": [f"tren {state['trend_tf']}: tidak ada data"]}
     prompt = (
-        f"{_TREND_SYS}\n\nSymbol: {state['symbol']}\nTimeframe: {state['trend_tf']}\n"
+        f"{_TREND_SYS}{_LANG}\n\nSymbol: {state['symbol']}\nTimeframe: {state['trend_tf']}\n"
         f"Snapshot:\n{_fmt(snap)}"
     )
     try:
@@ -100,7 +106,7 @@ async def trend_node(state: AnalysisState) -> dict:
         return {"trend": out.model_dump(), "trace": [f"trend {state['trend_tf']}: {out.bias}/{out.strength}"]}
     except Exception as exc:  # noqa: BLE001
         return {"trend": {"bias": "range", "strength": "weak", "key_levels": [],
-                          "rationale": f"agent failed: {exc}"}, "errors": [f"trend: {exc}"]}
+                          "rationale": f"agen gagal: {exc}"}, "errors": [f"tren: {exc}"]}
 
 
 async def validation_node(state: AnalysisState) -> dict:
@@ -108,10 +114,10 @@ async def validation_node(state: AnalysisState) -> dict:
     if not snap:
         return {"validation": {"agrees_with_trend": False, "phase": "consolidation",
                                "pattern": "n/a", "invalidation_level": state.get("price", 0.0),
-                               "rationale": "no data"},
-                "errors": [f"validation {state['validation_tf']}: no data"]}
+                               "rationale": "tidak ada data"},
+                "errors": [f"validasi {state['validation_tf']}: tidak ada data"]}
     prompt = (
-        f"{_VALID_SYS}\n\nSymbol: {state['symbol']}\nTimeframe: {state['validation_tf']}\n"
+        f"{_VALID_SYS}{_LANG}\n\nSymbol: {state['symbol']}\nTimeframe: {state['validation_tf']}\n"
         f"Trend verdict ({state['trend_tf']}):\n{_fmt(state.get('trend', {}))}\n"
         f"Snapshot:\n{_fmt(snap)}"
     )
@@ -122,7 +128,7 @@ async def validation_node(state: AnalysisState) -> dict:
     except Exception as exc:  # noqa: BLE001
         return {"validation": {"agrees_with_trend": False, "phase": "consolidation",
                                "pattern": "n/a", "invalidation_level": state.get("price", 0.0),
-                               "rationale": f"agent failed: {exc}"}, "errors": [f"validation: {exc}"]}
+                               "rationale": f"agen gagal: {exc}"}, "errors": [f"validasi: {exc}"]}
 
 
 async def critical_node(state: AnalysisState) -> dict:
@@ -130,10 +136,10 @@ async def critical_node(state: AnalysisState) -> dict:
     if not snap:
         return {"critical": {"zones": [], "nearest_support": state.get("price", 0.0),
                              "nearest_resistance": state.get("price", 0.0),
-                             "entry_trigger": "n/a", "rationale": "no data"},
-                "errors": [f"critical {state['critical_tf']}: no data"]}
+                             "entry_trigger": "n/a", "rationale": "tidak ada data"},
+                "errors": [f"area kritis {state['critical_tf']}: tidak ada data"]}
     prompt = (
-        f"{_CRIT_SYS}\n\nSymbol: {state['symbol']}\nTimeframe: {state['critical_tf']}\n"
+        f"{_CRIT_SYS}{_LANG}\n\nSymbol: {state['symbol']}\nTimeframe: {state['critical_tf']}\n"
         f"Trend: {state.get('trend', {}).get('bias')}\n"
         f"Validation: {state.get('validation', {}).get('phase')}\n"
         f"Snapshot:\n{_fmt(snap)}"
@@ -145,8 +151,8 @@ async def critical_node(state: AnalysisState) -> dict:
     except Exception as exc:  # noqa: BLE001
         return {"critical": {"zones": [], "nearest_support": state.get("price", 0.0),
                              "nearest_resistance": state.get("price", 0.0),
-                             "entry_trigger": "n/a", "rationale": f"agent failed: {exc}"},
-                "errors": [f"critical: {exc}"]}
+                             "entry_trigger": "n/a", "rationale": f"agen gagal: {exc}"},
+                "errors": [f"area kritis: {exc}"]}
 
 
 async def decision_node(state: AnalysisState) -> dict:
@@ -156,12 +162,12 @@ async def decision_node(state: AnalysisState) -> dict:
             "decision": {"action": "NO_TRADE", "confidence": 0, "reasons": [],
                          "vetoes": ["no market data for any timeframe"]},
             "vetoes": ["no market data for any timeframe"],
-            "trace": ["decision: NO_TRADE (no data)"],
+            "trace": ["keputusan: NO_TRADE (tanpa data)"],
         }
     snap = state["snapshots"].get(state["critical_tf"], {})
     atr_pips = snap.get("atr_pips", 0.0)
     prompt = (
-        f"{_DECISION_SYS}\n\nSymbol: {state['symbol']}\n"
+        f"{_DECISION_SYS}{_LANG}\n\nSymbol: {state['symbol']}\n"
         f"Execution TF: {state['critical_tf']}\nPrice: {state.get('price')}\n"
         f"ATR({state['critical_tf']}) = {atr_pips} pips\n"
         f"min_rr = {s.min_rr}\nmax_spread_pips = {s.max_spread_pips}\n"
@@ -173,7 +179,7 @@ async def decision_node(state: AnalysisState) -> dict:
         out: DecisionOut = await structured(prompt, DecisionOut)
     except Exception as exc:  # noqa: BLE001
         return {"decision": {"action": "NO_TRADE", "confidence": 0, "reasons": [],
-                             "vetoes": [f"decision agent failed: {exc}"]},
+                             "vetoes": [f"agen keputusan gagal: {exc}"]},
                 "errors": [f"decision: {exc}"]}
 
     # deterministic guardrails on top of the LLM
@@ -185,16 +191,16 @@ async def decision_node(state: AnalysisState) -> dict:
         out.rr = rr
         pip = state.get("pip") or PIP
         if risk <= 0 or rr < s.min_rr:
-            vetoes.append(f"rr {rr} < min_rr {s.min_rr}")
+            vetoes.append(f"RR {rr} di bawah min_rr {s.min_rr}")
         if risk / pip > max(atr_pips * 3, 1e-9):
-            vetoes.append(f"stop {round(risk / pip, 1)} pips > 3x ATR {atr_pips}")
+            vetoes.append(f"jarak SL {round(risk / pip, 1)} pips melebihi 3x ATR {atr_pips}")
         side_ok = (out.action == "BUY" and out.stop_loss < out.entry < out.take_profit) or (
             out.action == "SELL" and out.take_profit < out.entry < out.stop_loss
         )
         if not side_ok:
-            vetoes.append("stop/target on wrong side of entry")
+            vetoes.append("SL/TP berada di sisi yang salah dari entry")
     elif out.action in ("BUY", "SELL"):
-        vetoes.append("incomplete trade plan (entry/sl/tp missing)")
+        vetoes.append("rencana trade tidak lengkap (entry/SL/TP kosong)")
 
     if vetoes and out.action != "NO_TRADE":
         out.action = "NO_TRADE"
