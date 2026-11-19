@@ -60,12 +60,43 @@ def _fmt(obj: Any) -> str:
 
 async def fetch_node(state: AnalysisState) -> dict:
     s = get_settings()
-    provider = get_provider(s.market_provider)
     tf_map = cascade(state["base_tf"])
     pip = pip_size(state["symbol"])
     snaps: dict[str, dict] = {}
     errors: list[str] = []
     trace: list[str] = []
+
+    names = [s.market_provider]
+    if s.market_fallback and s.market_fallback != s.market_provider:
+        names.append(s.market_fallback)
+
+    provider = None
+    for name in names:
+        try:
+            candidate = get_provider(name)
+            candidate.fetch(state["symbol"], tf_map["critical"], bars=60)
+        except Exception as exc:  # noqa: BLE001 - provider mati, coba berikutnya
+            errors.append(f"provider {name}: {exc}")
+            log.warning("provider %s tidak bisa dipakai: %s", name, exc)
+            continue
+        provider = candidate
+        trace.append(f"provider: {name}")
+        break
+
+    if provider is None:
+        return {
+            "trend_tf": tf_map["trend"],
+            "validation_tf": tf_map["validation"],
+            "critical_tf": tf_map["critical"],
+            "snapshots": {},
+            "price": 0.0,
+            "price_time": "",
+            "price_lag_s": None,
+            "quote": {},
+            "pip": pip,
+            "errors": errors,
+            "trace": trace + ["fetch: semua provider gagal"],
+        }
 
     for role in ("trend", "validation", "critical"):
         tf = tf_map[role]
@@ -177,8 +208,8 @@ async def decision_node(state: AnalysisState) -> dict:
     if not state.get("snapshots"):
         return {
             "decision": {"action": "NO_TRADE", "confidence": 0, "reasons": [],
-                         "vetoes": ["no market data for any timeframe"]},
-            "vetoes": ["no market data for any timeframe"],
+                         "vetoes": ["tidak ada data pasar untuk timeframe mana pun"]},
+            "vetoes": ["tidak ada data pasar untuk timeframe mana pun"],
             "trace": ["keputusan: NO_TRADE (tanpa data)"],
         }
     snap = state["snapshots"].get(state["critical_tf"], {})

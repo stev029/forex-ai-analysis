@@ -145,3 +145,89 @@ def test_close_shuts_down(monkeypatch):
     p.connect()
     p.close()
     assert fake.shutdown_called
+
+
+def test_mt5linux_bridge_is_instantiated(monkeypatch):
+    """mt5linux mengekspos class, bukan fungsi modul: harus di-instansiasi."""
+    from forex_agents import market_mt5
+
+    created: dict = {}
+
+    class Bridge:
+        def __init__(self, host="localhost", port=18812, timeout=300):
+            created.update(host=host, port=port, timeout=timeout)
+
+        def initialize(self, **kwargs):
+            created["init"] = kwargs
+            return True
+
+    pkg = types.ModuleType("mt5linux")
+    pkg.MetaTrader5 = Bridge
+    monkeypatch.setitem(sys.modules, "mt5linux", pkg)
+    monkeypatch.setitem(sys.modules, "MetaTrader5", None)
+
+    api = market_mt5._import_mt5("10.0.0.5", 19000, 42)
+    assert isinstance(api, Bridge)
+    assert created == {"host": "10.0.0.5", "port": 19000, "timeout": 42}
+    assert market_mt5._is_bridge(api) is True
+
+
+def test_connect_does_not_pass_host_to_initialize(monkeypatch):
+    fake = _install(monkeypatch, FakeMT5())
+    p = MT5Provider(login=1234, password="pw", server="Broker-Demo")
+    p.connect()
+    assert fake.init_kwargs == {"login": 1234, "password": "pw", "server": "Broker-Demo"}
+    assert "host" not in fake.init_kwargs and "port" not in fake.init_kwargs
+
+
+@pytest.mark.asyncio
+async def test_fetch_node_falls_back_when_mt5_dead(monkeypatch):
+    """MARKET_PROVIDER=mt5 tanpa terminal harus jatuh ke MARKET_FALLBACK."""
+    from types import SimpleNamespace
+
+    from forex_agents import nodes
+    from forex_agents.market import YFinanceProvider
+
+    calls: list[str] = []
+
+    class Dead:
+        def fetch(self, *a, **k):
+            raise MT5Unavailable("tidak ada terminal")
+
+    def fake_get_provider(name):
+        calls.append(name)
+        return Dead() if name == "mt5" else YFinanceProvider()
+
+    monkeypatch.setattr(nodes, "get_provider", fake_get_provider)
+    monkeypatch.setattr(
+        nodes, "get_settings",
+        lambda: SimpleNamespace(market_provider="mt5", market_fallback="yfinance"),
+    )
+    monkeypatch.setattr(
+        nodes, "snapshot",
+        lambda df, tf, pip=0.0001: {"timeframe": tf, "last_price": float(df["close"].iloc[-1]),
+                                   "last_bar_time": str(df.index[-1])},
+    )
+
+    class FakeProvider:
+        def fetch(self, symbol, tf, bars=300):
+            idx = pd.date_range("2026-01-01", periods=80, freq="1min", tz="UTC")
+            return pd.DataFrame({"open": 1.1, "high": 1.2, "low": 1.0,
+                                 "close": 1.15, "volume": 1.0}, index=idx)
+
+        def quote(self, symbol, ttl=5.0):
+            return {"price": 1.16, "time": "2026-01-01T01:20:00+00:00", "lag_s": 3}
+
+    def dispatch(name):
+        calls.append(name)
+        return Dead() if name == "mt5" else FakeProvider()
+
+    monkeypatch.setattr(nodes, "get_provider", dispatch)
+
+    out = await nodes.fetch_node({"symbol": "EURUSD", "base_tf": "m1"})
+    assert out["price"] == pytest.approx(1.16)
+    assert out["price_lag_s"] == 3
+    assert set(out["snapshots"]) == {"m15", "m5", "m1"}
+    assert any("mt5" in e for e in out["errors"])
+    assert "provider: yfinance" in out["trace"]
+    assert calls == ["mt5", "yfinance"]

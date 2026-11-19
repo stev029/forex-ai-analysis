@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import time
+import types
 from typing import Any
 
 import pandas as pd
@@ -33,8 +34,8 @@ class MT5Unavailable(RuntimeError):
     """Dilempar saat terminal/package MT5 tidak bisa dipakai."""
 
 
-def _import_mt5() -> Any:
-    """Coba package asli dulu, lalu bridge mt5linux."""
+def _import_mt5(host: str = "127.0.0.1", port: int = 18812, timeout: int = 300) -> Any:
+    """Package asli (modul) atau bridge mt5linux (instance class)."""
     try:
         import MetaTrader5 as mt5  # type: ignore
 
@@ -42,14 +43,19 @@ def _import_mt5() -> Any:
     except ImportError:
         pass
     try:
-        import mt5linux  # type: ignore
-
-        return mt5linux
+        from mt5linux import MetaTrader5 as Mt5Linux  # type: ignore
     except ImportError as exc:  # pragma: no cover - tergantung environment
         raise MT5Unavailable(
             "package MetaTrader5 / mt5linux tidak terpasang; "
             "jalankan `pip install MetaTrader5` (Windows) atau `pip install mt5linux`"
         ) from exc
+    # mt5linux mengekspos class, bukan fungsi modul: harus di-instansiasi.
+    return Mt5Linux(host=host, port=port, timeout=timeout)
+
+
+def _is_bridge(api: Any) -> bool:
+    """True bila objek berasal dari mt5linux (bukan modul MetaTrader5)."""
+    return not isinstance(api, types.ModuleType)
 
 
 class MT5Provider:
@@ -85,7 +91,7 @@ class MT5Provider:
     # ---------------------------------------------------------------- koneksi
     def _api(self) -> Any:
         if self._mt5 is None:
-            self._mt5 = _import_mt5()
+            self._mt5 = _import_mt5(self.host, self.port, self.timeout)
         return self._mt5
 
     def connect(self) -> Any:
@@ -102,11 +108,11 @@ class MT5Provider:
                 password=self.password,
                 server=self.server,
             )
-        if self.host not in ("", "127.0.0.1", "localhost"):
-            kwargs.setdefault("host", self.host)
-            kwargs.setdefault("port", self.port)
-            kwargs.setdefault("timeout", self.timeout)
-        ok = mt5.initialize(**kwargs) if kwargs else mt5.initialize()
+        # host/port hanya untuk klien RPyC (mt5linux), bukan argumen initialize.
+        if kwargs:
+            ok = mt5.initialize(**kwargs)
+        else:
+            ok = mt5.initialize()
         if not ok:
             err = getattr(mt5, "last_error", lambda: ("?",))()
             raise MT5Unavailable(f"mt5.initialize gagal: {err}")

@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     telegram_allowed_user_ids: str = ""
 
     market_provider: str = "yfinance"
+    market_fallback: str = ""
     default_symbol: str = "EURUSD"
     default_timeframe: str = "m1"
 
