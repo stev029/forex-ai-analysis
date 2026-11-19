@@ -8,7 +8,7 @@ from typing import Any
 from .config import get_settings
 from .indicators import snapshot
 from .llm import structured
-from .market import get_provider, last_price
+from .market import get_provider, last_price, pip_size
 from .schemas import CriticalOut, DecisionOut, TrendOut, ValidationOut
 from .state import AnalysisState
 from .timeframes import PIP, cascade
@@ -56,6 +56,7 @@ async def fetch_node(state: AnalysisState) -> dict:
     s = get_settings()
     provider = get_provider(s.market_provider)
     tf_map = cascade(state["base_tf"])
+    pip = pip_size(state["symbol"])
     snaps: dict[str, dict] = {}
     errors: list[str] = []
     trace: list[str] = []
@@ -64,7 +65,7 @@ async def fetch_node(state: AnalysisState) -> dict:
         tf = tf_map[role]
         try:
             df = provider.fetch(state["symbol"], tf, bars=300)
-            snaps[tf] = snapshot(df, tf)
+            snaps[tf] = snapshot(df, tf, pip=pip)
             trace.append(f"fetched {state['symbol']} {tf} ({len(df)} bars)")
         except Exception as exc:  # noqa: BLE001
             errors.append(f"fetch {tf}: {exc}")
@@ -79,6 +80,7 @@ async def fetch_node(state: AnalysisState) -> dict:
         "critical_tf": tf_map["critical"],
         "snapshots": snaps,
         "price": float(price),
+        "pip": pip,
         "errors": errors,
         "trace": trace,
     }
@@ -149,6 +151,13 @@ async def critical_node(state: AnalysisState) -> dict:
 
 async def decision_node(state: AnalysisState) -> dict:
     s = get_settings()
+    if not state.get("snapshots"):
+        return {
+            "decision": {"action": "NO_TRADE", "confidence": 0, "reasons": [],
+                         "vetoes": ["no market data for any timeframe"]},
+            "vetoes": ["no market data for any timeframe"],
+            "trace": ["decision: NO_TRADE (no data)"],
+        }
     snap = state["snapshots"].get(state["critical_tf"], {})
     atr_pips = snap.get("atr_pips", 0.0)
     prompt = (
@@ -174,10 +183,11 @@ async def decision_node(state: AnalysisState) -> dict:
         reward = abs(out.take_profit - out.entry)
         rr = round(reward / risk, 2) if risk else 0.0
         out.rr = rr
+        pip = state.get("pip") or PIP
         if risk <= 0 or rr < s.min_rr:
             vetoes.append(f"rr {rr} < min_rr {s.min_rr}")
-        if risk / PIP > max(atr_pips * 3, 1e-9):
-            vetoes.append(f"stop {round(risk / PIP, 1)} pips > 3x ATR {atr_pips}")
+        if risk / pip > max(atr_pips * 3, 1e-9):
+            vetoes.append(f"stop {round(risk / pip, 1)} pips > 3x ATR {atr_pips}")
         side_ok = (out.action == "BUY" and out.stop_loss < out.entry < out.take_profit) or (
             out.action == "SELL" and out.take_profit < out.entry < out.stop_loss
         )

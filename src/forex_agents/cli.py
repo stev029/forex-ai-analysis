@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import sys
 
 from .memory import db_cm, save_analysis
 from .render import render
@@ -18,8 +19,11 @@ async def _main() -> None:
     args = ap.parse_args()
 
     final, rid = await run_analysis(args.symbol, args.timeframe)
-    async with db_cm() as conn:
-        await save_analysis(conn, request_id=rid, chat_id=None, state=final)
+    try:
+        async with db_cm() as conn:
+            await save_analysis(conn, request_id=rid, chat_id=None, state=final)
+    except Exception as exc:  # noqa: BLE001
+        print(f"warn: db save failed: {exc}", file=sys.stderr)
 
     if args.json:
         print(json.dumps(final, indent=2, default=str))

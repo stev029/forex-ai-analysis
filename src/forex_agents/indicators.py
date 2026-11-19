@@ -76,7 +76,7 @@ def structure(df: pd.DataFrame, lookback: int = 60) -> dict:
     return out
 
 
-def snapshot(df: pd.DataFrame, tf: str, bars: int = 120) -> dict:
+def snapshot(df: pd.DataFrame, tf: str, bars: int = 120, pip: float = PIP) -> dict:
     """Compact numeric snapshot fed to the LLM instead of raw candles."""
     tail = df.tail(bars)
     close = tail["close"]
@@ -100,7 +100,7 @@ def snapshot(df: pd.DataFrame, tf: str, bars: int = 120) -> dict:
         "macd_hist": round(float(hist.iloc[-1]), 6),
         "macd_hist_prev": round(float(hist.iloc[-2]), 6),
         "atr14": round(atr_v, 5),
-        "atr_pips": round(atr_v / PIP, 1),
+        "atr_pips": round(atr_v / pip, 1) if pip else 0.0,
         "range_high": round(float(tail["high"].max()), 5),
         "range_low": round(float(tail["low"].min()), 5),
         "structure": structure(tail),

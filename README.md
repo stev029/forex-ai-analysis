@@ -117,15 +117,41 @@ Telegram:
 /history
 ```
 
+## Symbols
+
+Any 6-letter FX code (`EURUSD`, `GBPJPY`, `USDIDR`) maps to `SYMBOL=X`. Non-FX instruments map
+through `SYMBOL_ALIASES` in `src/forex_agents/market.py`, because yfinance has no `XAUUSD=X`:
+
+| input | ticker | pip |
+|---|---|---|
+| `XAUUSD` / `GOLD` | `GC=F` | 0.1 |
+| `XAGUSD` / `SILVER` | `SI=F` | 0.1 |
+| `BTCUSD` / `ETHUSD` | `BTC-USD` / `ETH-USD` | 1.0 |
+| `US30` / `NAS100` / `SPX500` | `^DJI` / `^NDX` / `^GSPC` | 1.0 |
+| `USOIL` / `UKOIL` | `CL=F` / `BZ=F` | 1.0 |
+| `DXY` | `DX-Y.NYB` | 1.0 |
+| `USDJPY` and other JPY crosses | `USDJPY=X` | 0.01 |
+
+`pip_size()` returns the per-instrument pip so ATR-in-pips and the 3x-ATR stop veto stay
+meaningful outside FX majors (a fixed 0.0001 made gold ATR read as 36666 pips).
+Telegram `/symbols` prints the table.
+
 ## Tests
 
 ```bash
 pytest -q
 ```
 
-Covers cascade mapping (including clamp at `w1`), indicator finiteness, snapshot shape,
-structure detection, decision guardrails (low RR, wrong SL/TP side, stop > 3x ATR) and HTML
-escaping in the renderer. No network or LLM calls.
+35 tests: cascade mapping (incl. clamp at `w1`), indicator finiteness, snapshot shape, structure
+detection, decision guardrails (low RR, wrong SL/TP side, stop > 3x ATR), HTML escaping, symbol
+aliases and pip sizing. No network or LLM calls.
+
+## Schema migration
+
+`memory.py:SCHEMA_SQL` is idempotent and self-migrating. It creates `analyses` if missing, then
+`ADD COLUMN IF NOT EXISTS` for `request_id/base_tf/trend_tf/validation_tf/critical_tf/action/confidence/price/payload`,
+drops `NOT NULL` from the legacy `decision` column, and widens legacy `numeric(5,4)` price columns
+to `DOUBLE PRECISION` (they overflow for gold/indices/crypto).
 
 ## Notes / limits
 

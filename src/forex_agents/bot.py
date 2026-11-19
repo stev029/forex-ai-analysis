@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import html
 import logging
 
 from telegram import Update
@@ -21,6 +22,7 @@ HELP = (
     "/analyze [SYMBOL] [TF] — run the 4-stage cascade\n"
     "   e.g. <code>/analyze EURUSD m1</code>\n"
     "/tf m1 — show which timeframes a base TF maps to\n"
+    "/symbols — supported symbols/aliases\n"
     "/history — last 5 runs\n"
     "/help — this message\n\n"
     "Stages: trend (base+2) → validation (base+1) → critical (base) → decision."
@@ -98,17 +100,42 @@ async def cmd_analyze(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         await msg.reply_text(f"analysis failed: {exc}")
         return
 
-    async with db_cm() as conn:
-        await save_analysis(conn, request_id=rid, chat_id=chat.id, state=final)
+    try:
+        async with db_cm() as conn:
+            await save_analysis(conn, request_id=rid, chat_id=chat.id, state=final)
+    except Exception as exc:  # noqa: BLE001 - persistence must not kill the reply
+        log.exception("save_analysis failed")
+        final.setdefault("errors", []).append(f"db: {exc}")
 
     await msg.reply_text(render(final), parse_mode=ParseMode.HTML)
+
+
+async def cmd_symbols(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
+    if not await _guard(update):
+        return
+    from .market import SYMBOL_ALIASES
+
+    pairs = " ".join(
+        f"{k}→{v}" for k, v in sorted(SYMBOL_ALIASES.items())
+    )
+    await update.effective_message.reply_text(
+        "<b>FX pairs</b>: any 6-letter code, e.g. <code>EURUSD</code> <code>GBPJPY</code> "
+        "<code>USDIDR</code>\n\n"
+        f"<b>Aliases</b>:\n<pre>{html.escape(pairs)}</pre>",
+        parse_mode=ParseMode.HTML,
+    )
 
 
 async def cmd_history(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
     if not await _guard(update):
         return
-    async with db_cm() as conn:
-        rows = await recent_analyses(conn, 5)
+    try:
+        async with db_cm() as conn:
+            rows = await recent_analyses(conn, 5)
+    except Exception as exc:  # noqa: BLE001
+        log.exception("history failed")
+        await update.effective_message.reply_text(f"history failed: {exc}")
+        return
     if not rows:
         await update.effective_message.reply_text("no history (or DATABASE_URL unset)")
         return
@@ -116,6 +143,15 @@ async def cmd_history(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
         f"{r['at'][:19]}  {r['symbol']} {r['tf']}  {r['action']} {r['confidence']}" for r in rows
     )
     await update.effective_message.reply_text(f"<pre>{body}</pre>", parse_mode=ParseMode.HTML)
+
+
+async def on_error(update: object, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    log.exception("unhandled update error", exc_info=ctx.error)
+    if isinstance(update, Update) and update.effective_message:
+        try:
+            await update.effective_message.reply_text(f"error: {ctx.error}")
+        except Exception:  # noqa: BLE001
+            pass
 
 
 def main() -> None:
@@ -128,7 +164,9 @@ def main() -> None:
     app.add_handler(CommandHandler(["start", "help"], cmd_start))
     app.add_handler(CommandHandler("tf", cmd_tf))
     app.add_handler(CommandHandler("analyze", cmd_analyze))
+    app.add_handler(CommandHandler("symbols", cmd_symbols))
     app.add_handler(CommandHandler("history", cmd_history))
+    app.add_error_handler(on_error)
     log.info("bot polling")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 

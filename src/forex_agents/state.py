@@ -17,6 +17,7 @@ class AnalysisState(TypedDict, total=False):
     # deterministic data
     snapshots: dict[str, dict[str, Any]]
     price: float
+    pip: float
 
     # agent outputs (one per stage)
     trend: dict[str, Any]
