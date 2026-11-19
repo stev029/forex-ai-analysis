@@ -167,6 +167,7 @@ Konfigurasi `.env`:
 
 ```ini
 MARKET_PROVIDER=mt5
+MARKET_FALLBACK=yfinance   # dipakai otomatis bila mt5 tidak bisa connect
 MT5_HOST=127.0.0.1
 MT5_PORT=18812
 MT5_LOGIN=12345678
@@ -185,6 +186,17 @@ memberi nilai point broker bila perlu pip yang persis.
 Batasan: tanpa terminal MT5 yang hidup, `MT5Provider` melempar `MT5Unavailable`. Di Termux
 murni (tanpa docker/udocker) tidak ada cara menjalankan terminal MT5, jadi `yfinance` tetap
 default.
+
+### Fallback
+
+`MARKET_FALLBACK` membuat `fetch_node` mencoba provider utama dulu, lalu provider cadangan
+bila `fetch()` pertama gagal. Provider yang gagal dicatat di `errors` dan tetap tampil di
+bagian `kesalahan:` pada balasan, jadi tidak pernah senyap.
+
+```ini
+MARKET_PROVIDER=mt5
+MARKET_FALLBACK=yfinance
+```
 
 ## Tests
 
