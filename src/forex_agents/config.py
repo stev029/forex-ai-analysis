@@ -23,6 +23,16 @@ class Settings(BaseSettings):
     default_symbol: str = "EURUSD"
     default_timeframe: str = "m1"
 
+    # MetaTrader 5 (MARKET_PROVIDER=mt5)
+    mt5_host: str = "127.0.0.1"
+    mt5_port: int = 18812
+    mt5_login: int = 0
+    mt5_password: str = ""
+    mt5_server: str = ""
+    mt5_path: str = ""
+    mt5_timeout: int = 300
+    mt5_symbol_suffix: str = ""
+
     min_rr: float = Field(default=1.5, ge=0.5)
     max_spread_pips: float = 2.0
 

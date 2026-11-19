@@ -144,6 +144,21 @@ def get_provider(name: str) -> MarketProvider:
     name = (name or "yfinance").lower()
     if name == "yfinance":
         return YFinanceProvider()
+    if name in ("mt5", "metatrader5", "metatrader"):
+        from .config import get_settings
+        from .market_mt5 import MT5Provider
+
+        s = get_settings()
+        return MT5Provider(
+            host=s.mt5_host,
+            port=s.mt5_port,
+            login=s.mt5_login or None,
+            password=s.mt5_password,
+            server=s.mt5_server,
+            path=s.mt5_path,
+            timeout=s.mt5_timeout,
+            suffix=s.mt5_symbol_suffix,
+        )
     raise ValueError(f"unsupported MARKET_PROVIDER={name!r}")
 
 def last_price(df: pd.DataFrame) -> float:

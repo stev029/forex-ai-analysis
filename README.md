@@ -28,7 +28,8 @@ any veto downgrades the call to `NO_TRADE`.
 src/forex_agents/
   config.py      pydantic-settings env loading
   timeframes.py  ladder, aliases, cascade(), yfinance interval map
-  market.py      YFinanceProvider (cached 30s), h4 resample
+  market.py      YFinanceProvider + get_provider() dispatch
+  market_mt5.py  MT5Provider (MetaTrader5 / mt5linux bridge)
   indicators.py  EMA/ATR/RSI/MACD, swing points, structure, snapshot()
   schemas.py     Pydantic contracts per stage
   llm.py         ChatOpenAI factory + structured() with JSON fallback
@@ -44,6 +45,7 @@ run.sh           Termux/proot launcher
 run-server.sh    Ubuntu server launcher (venv + systemd)
 tests/test_core.py
 tests/test_decision.py
+tests/test_mt5.py
 ```
 
 ## Setup (Termux → Ubuntu proot)
@@ -136,15 +138,64 @@ through `SYMBOL_ALIASES` in `src/forex_agents/market.py`, because yfinance has n
 meaningful outside FX majors (a fixed 0.0001 made gold ATR read as 36666 pips).
 Telegram `/symbols` prints the table.
 
+## Market data providers
+
+`MARKET_PROVIDER` di `.env` memilih sumber OHLCV + tick:
+
+| nilai | sumber | catatan |
+|---|---|---|
+| `yfinance` (default) | Yahoo Finance | tanpa login, delay FX ~70–100 detik, emas futures ~10 menit |
+| `mt5` | MetaTrader 5 terminal | tick real-time dari broker, butuh terminal MT5 yang login |
+
+### MetaTrader 5
+
+Dua jalur koneksi, dipilih otomatis oleh `_import_mt5()` di
+`src/forex_agents/market_mt5.py`:
+
+1. **Windows / Wine** — package `MetaTrader5` asli. Isi `MT5_PATH` ke `terminal64.exe`
+   (opsional) dan `MT5_LOGIN` / `MT5_PASSWORD` / `MT5_SERVER` untuk auto-login.
+2. **Linux / ARM (Termux proot)** — bridge `mt5linux` (RPyC). Terminal MT5 tetap harus jalan
+   di container docker/udocker yang disediakan `mt5linux`; klien hanya menyambung ke
+   `MT5_HOST:MT5_PORT` (default `127.0.0.1:18812`).
+
+```bash
+pip install MetaTrader5      # Windows / Wine
+pip install mt5linux         # Linux / ARM bridge
+```
+
+Konfigurasi `.env`:
+
+```ini
+MARKET_PROVIDER=mt5
+MT5_HOST=127.0.0.1
+MT5_PORT=18812
+MT5_LOGIN=12345678
+MT5_PASSWORD=secret
+MT5_SERVER=Broker-Demo
+MT5_PATH=
+MT5_TIMEOUT=300
+MT5_SYMBOL_SUFFIX=      # mis. "m" atau ".m" untuk EURUSDm / EURUSD.m
+```
+
+`MT5Provider` memakai `copy_rates_from_pos` untuk OHLCV (kolom `tick_volume` dipetakan ke
+`volume`) dan `symbol_info_tick` untuk quote — harga acuan = mid `(bid+ask)/2`, dan spread
+ikut dilaporkan. `pip_size()` tetap dipakai untuk normalisasi ATR; `MT5Provider.point()`
+memberi nilai point broker bila perlu pip yang persis.
+
+Batasan: tanpa terminal MT5 yang hidup, `MT5Provider` melempar `MT5Unavailable`. Di Termux
+murni (tanpa docker/udocker) tidak ada cara menjalankan terminal MT5, jadi `yfinance` tetap
+default.
+
 ## Tests
 
 ```bash
 pytest -q
 ```
 
-35 tests: cascade mapping (incl. clamp at `w1`), indicator finiteness, snapshot shape, structure
+48 tests: cascade mapping (incl. clamp at `w1`), indicator finiteness, snapshot shape, structure
 detection, decision guardrails (low RR, wrong SL/TP side, stop > 3x ATR), HTML escaping, symbol
-aliases and pip sizing. No network or LLM calls.
+aliases, pip sizing, lag/quote helpers, dan MT5 provider dengan modul `MetaTrader5` palsu
+(fetch, cache TTL, suffix simbol, quote mid+spread, shutdown). No network or LLM calls.
 
 ## Schema migration
 
