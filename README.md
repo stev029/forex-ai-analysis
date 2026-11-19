@@ -43,6 +43,7 @@ src/forex_agents/
   cli.py         one-shot CLI
 run.sh           Termux/proot launcher
 run-server.sh    Ubuntu server launcher (venv + systemd)
+requirements-dev.txt  pytest + pytest-asyncio
 tests/test_core.py
 tests/test_decision.py
 tests/test_mt5.py
@@ -50,15 +51,24 @@ tests/test_mt5.py
 
 ## Setup (Termux → Ubuntu proot)
 
+Semua dependency masuk ke venv `$PROJ/.venv` di dalam proot — tidak ada lagi
+`pip3 install --break-system-packages`.
+
 ```bash
-proot-distro login ubuntu
-apt-get update && apt-get install -y python3-pip
-pip3 install --break-system-packages -r requirements.txt
-pip3 install --break-system-packages -e .
+./run.sh install     # buat .venv + install requirements.txt + pip install -e . (detached)
+./run.sh dev         # tambah pytest + pytest-asyncio dari requirements-dev.txt
+./run.sh info        # cek sys.prefix, versi Python, isi pip
+./run.sh test        # pytest di dalam venv
+./run.sh cli EURUSD m1
+./run.sh bot         # nohup -> .tmp/bot.log
+./run.sh shell       # bash interaktif dengan venv siap
 ```
 
 `proot-distro login ubuntu -- <cmd>` works for one-shot commands; long installs should run
-detached (`nohup ... &`) because the proot session dies with the parent shell.
+detached (`nohup ... &`) because the proot session dies with the parent shell — `run.sh`
+sudah melakukannya untuk `install`, `dev`, dan `bot`.
+
+venv dibuat tanpa `--system-site-packages`, jadi paket sistem tidak bocor ke runtime.
 
 ## Config
 

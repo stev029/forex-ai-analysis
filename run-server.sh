@@ -65,6 +65,12 @@ case "${1:-help}" in
     "$PYBIN" -m pytest -q
     ;;
 
+  dev)
+    need_venv
+    "$PIPBIN" install -q -r requirements-dev.txt
+    echo "dev deps ready: $("$PYBIN" -m pytest --version 2>&1 | head -1)"
+    ;;
+
   start)
     need_venv; ensure_logs
     if have_systemd; then
@@ -158,12 +164,13 @@ EOF
 
   *)
     cat <<EOF
-usage: $0 {install|cli <SYMBOL> <TF>|bot|test|start|stop|restart|status|logs|install-service|uninstall-service}
+usage: $0 {install|dev|cli <SYMBOL> <TF>|bot|test|start|stop|restart|status|logs|install-service|uninstall-service}
 
   install            apt deps + venv + pip install -e . + .env scaffold
   cli EURUSD m1      one-shot analysis, printed
   bot                run bot in foreground
   test               pytest
+  dev                install requirements-dev.txt (pytest, pytest-asyncio)
   start|stop|status  systemd if installed, else nohup + logs/bot.pid
   logs [N]           journalctl if systemd, else tail logs/bot.log
   install-service    write /etc/systemd/system/${SERVICE}.service (root)
