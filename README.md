@@ -40,7 +40,10 @@ src/forex_agents/
   render.py      Telegram HTML renderer
   bot.py         /analyze /tf /history /help
   cli.py         one-shot CLI
+run.sh           Termux/proot launcher
+run-server.sh    Ubuntu server launcher (venv + systemd)
 tests/test_core.py
+tests/test_decision.py
 ```
 
 ## Setup (Termux → Ubuntu proot)
@@ -68,6 +71,38 @@ cp .env.example .env
 
 ## Run
 
+### Ubuntu server (native, no proot)
+
+`run-server.sh` uses a venv and optionally systemd:
+
+```bash
+./run-server.sh install          # apt deps + .venv + pip install -e . + .env scaffold
+./run-server.sh cli EURUSD m1    # one-shot, printed
+./run-server.sh test             # pytest
+./run-server.sh bot              # foreground
+./run-server.sh start            # daemon: systemd if available, else nohup + logs/bot.pid
+./run-server.sh status|stop|restart|logs [N]
+sudo ./run-server.sh install-service   # writes /etc/systemd/system/forex-bot.service
+sudo ./run-server.sh uninstall-service
+```
+
+`have_systemd()` checks `[ -d /run/systemd/system ]`, so containers/proot that ship the
+`systemctl` binary without a running PID 1 fall back to nohup + PID file instead of hanging.
+Overrides: `PYTHON_BIN`, `RUN_USER`, `SERVICE_NAME`.
+
+### Termux (proot-distro)
+
+`run.sh` wraps `proot-distro login ubuntu`:
+
+```bash
+./run.sh install
+./run.sh cli EURUSD m1
+./run.sh bot
+./run.sh test
+```
+
+### Direct
+
 ```bash
 forex-agents EURUSD m1            # CLI, rendered
 forex-agents EURUSD m1 --json     # raw final state
@@ -88,8 +123,9 @@ Telegram:
 pytest -q
 ```
 
-Covers cascade mapping (including clamp at `w1`), indicator finiteness, snapshot shape and
-structure detection. No network or LLM calls.
+Covers cascade mapping (including clamp at `w1`), indicator finiteness, snapshot shape,
+structure detection, decision guardrails (low RR, wrong SL/TP side, stop > 3x ATR) and HTML
+escaping in the renderer. No network or LLM calls.
 
 ## Notes / limits
 

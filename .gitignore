@@ -3,6 +3,7 @@
 __pycache__/
 *.pyc
 .tmp/
+logs/
 *.egg-info/
 .pytest_cache/
 .ruff_cache/
