@@ -6,6 +6,7 @@ import pandas as pd
 import pytest
 
 from forex_agents.indicators import atr, rsi, snapshot, structure
+from forex_agents.market import _lag_seconds, pip_size
 from forex_agents.timeframes import cascade, normalize_tf
 
 
@@ -38,6 +39,26 @@ def test_cascade(base, trend, val, crit):
 def test_cascade_clamps_at_top():
     m = cascade("w1")
     assert m["critical"] == "w1"
+
+def test_lag_seconds_from_utc_stamp():
+    lag = _lag_seconds("2026-11-19 17:10:00+00:00")
+    assert lag is not None and lag >= 0
+    assert _lag_seconds(None) is None
+    assert _lag_seconds("bukan-waktu") is None
+
+def test_pip_size_per_instrument():
+    assert pip_size("EURUSD") == 0.0001
+    assert pip_size("USDJPY") == 0.01
+    assert pip_size("XAUUSD") == 0.1
+    assert pip_size("NAS100") == 1.0
+
+def test_provider_cache_disabled_by_default():
+    from forex_agents.market import YFinanceProvider
+
+    assert YFinanceProvider().cache_ttl == 0.0
+
+def test_cascade_top_trend_stays_in_range():
+    m = cascade("w1")
     assert m["trend"] in ("w1", "d1")
 
 

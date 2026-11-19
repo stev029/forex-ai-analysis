@@ -49,6 +49,20 @@ def _esc(text: Any) -> str:
     return html.escape(" ".join(str(text or "").split()))
 
 
+def _stamp_line(final: dict) -> str:
+    """Baris waktu data harga + umur data, supaya jelas harga tidak basi."""
+    stamp = final.get("price_time") or ""
+    lag = final.get("price_lag_s")
+    if not stamp:
+        return "data harga: <i>tidak tersedia</i>"
+    short = stamp.replace("+00:00", "Z").replace("T", " ")[:19]
+    if lag is None:
+        return f"data harga: <code>{_esc(short)}</code>"
+    if lag < 90:
+        return f"data harga: <code>{_esc(short)}</code> ({lag} detik lalu)"
+    return f"data harga: <code>{_esc(short)}</code> ({lag // 60} menit lalu)"
+
+
 def split_message(text: str, limit: int = MAX_CHUNK) -> list[str]:
     """Pecah pesan panjang per baris utuh; tidak memotong kata maupun tag."""
     if len(text) <= limit:
@@ -80,6 +94,7 @@ def render(final: dict) -> str:
         f"{icon} <b>{ACTION_ID.get(action, action)}</b> — {_esc(final.get('symbol'))} "
         f"<code>{_esc(final.get('base_tf'))}</code>",
         f"keyakinan: <b>{d.get('confidence', 0)}</b>/100   harga: <code>{_p(final.get('price'))}</code>",
+        _stamp_line(final),
         "",
         f"<b>1) Tren ({_esc(final.get('trend_tf'))})</b> "
         f"{_t(BIAS_ID, t.get('bias'))} / {_t(STRENGTH_ID, t.get('strength'))}",

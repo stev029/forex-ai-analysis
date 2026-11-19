@@ -45,8 +45,11 @@ def to_yf_symbol(symbol: str) -> str:
 
 
 class YFinanceProvider:
-    def __init__(self) -> None:
+    def __init__(self, cache_ttl: float = 0.0) -> None:
+        # TTL 0 = selalu ambil data baru; cache hanya untuk quote tick.
+        self.cache_ttl = cache_ttl
         self._cache: dict[tuple[str, str], tuple[float, pd.DataFrame]] = {}
+        self._quote_cache: dict[str, tuple[float, dict]] = {}
 
     def fetch(self, symbol: str, timeframe: str, bars: int = 300) -> pd.DataFrame:
         import time
@@ -58,7 +61,7 @@ class YFinanceProvider:
         key = (to_yf_symbol(symbol), tf)
         now = time.time()
         cached = self._cache.get(key)
-        if cached and now - cached[0] < 30:
+        if cached and self.cache_ttl > 0 and now - cached[0] < self.cache_ttl:
             return cached[1].tail(bars).copy()
 
         raw = yf.download(
@@ -91,13 +94,57 @@ class YFinanceProvider:
         self._cache[key] = (now, df)
         return df.copy()
 
+    def quote(self, symbol: str, ttl: float = 5.0) -> dict:
+        """Harga tick terakhir + umur data. Dipakai untuk overlay harga live."""
+        import time
+
+        import yfinance as yf
+
+        ticker = to_yf_symbol(symbol)
+        now = time.time()
+        hit = self._quote_cache.get(ticker)
+        if hit and now - hit[0] < ttl:
+            return dict(hit[1])
+
+        price: float | None = None
+        stamp: str | None = None
+        try:
+            raw = yf.download(
+                ticker, interval="1m", period="1d", auto_adjust=False,
+                progress=False, threads=False,
+            )
+            if raw is not None and not raw.empty:
+                if isinstance(raw.columns, pd.MultiIndex):
+                    raw.columns = [c[0] for c in raw.columns]
+                frame = raw.rename(columns=str.lower)
+                frame.index = pd.to_datetime(frame.index, utc=True)
+                price = float(frame["close"].dropna().iloc[-1])
+                stamp = str(frame.index[-1])
+        except Exception as exc:  # noqa: BLE001 - quote is best effort
+            log.warning("quote failed for %s: %s", ticker, exc)
+
+        out = {"price": price, "time": stamp, "lag_s": _lag_seconds(stamp), "ticker": ticker}
+        self._quote_cache[ticker] = (now, out)
+        return dict(out)
+
+
+def _lag_seconds(stamp: str | None) -> int | None:
+    if not stamp:
+        return None
+    try:
+        ts = pd.Timestamp(stamp)
+    except (TypeError, ValueError):
+        return None
+    if ts.tzinfo is None:
+        ts = ts.tz_localize("UTC")
+    return max(int((pd.Timestamp.now(tz="UTC") - ts).total_seconds()), 0)
+
 
 def get_provider(name: str) -> MarketProvider:
     name = (name or "yfinance").lower()
     if name == "yfinance":
         return YFinanceProvider()
     raise ValueError(f"unsupported MARKET_PROVIDER={name!r}")
-
 
 def last_price(df: pd.DataFrame) -> float:
     return float(df["close"].iloc[-1])

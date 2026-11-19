@@ -17,6 +17,9 @@ class AnalysisState(TypedDict, total=False):
     # deterministic data
     snapshots: dict[str, dict[str, Any]]
     price: float
+    price_time: str
+    price_lag_s: int | None
+    quote: dict[str, Any]
     pip: float
 
     # agent outputs (one per stage)

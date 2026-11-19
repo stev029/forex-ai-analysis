@@ -77,15 +77,32 @@ async def fetch_node(state: AnalysisState) -> dict:
             errors.append(f"fetch {tf}: {exc}")
             log.exception("fetch failed for %s %s", state["symbol"], tf)
 
-    price = snaps.get(tf_map["critical"], {}).get("last_price") or (
+    # Harga acuan = quote tick terbaru, bukan close bar terakhir (bisa tertinggal 1-10 menit).
+    quote: dict = {}
+    try:
+        quote = provider.quote(state["symbol"])
+    except Exception as exc:  # noqa: BLE001 - quote is best effort
+        errors.append(f"quote: {exc}")
+        log.warning("quote failed for %s: %s", state["symbol"], exc)
+
+    bar_price = snaps.get(tf_map["critical"], {}).get("last_price") or (
         next(iter(snaps.values()))["last_price"] if snaps else 0.0
+    )
+    price = float(quote.get("price") or bar_price)
+    price_time = str(
+        quote.get("time")
+        or snaps.get(tf_map["critical"], {}).get("last_bar_time")
+        or ""
     )
     return {
         "trend_tf": tf_map["trend"],
         "validation_tf": tf_map["validation"],
         "critical_tf": tf_map["critical"],
         "snapshots": snaps,
-        "price": float(price),
+        "price": price,
+        "price_time": price_time,
+        "price_lag_s": quote.get("lag_s"),
+        "quote": quote,
         "pip": pip,
         "errors": errors,
         "trace": trace,
