@@ -37,6 +37,15 @@ def _t(table: dict[str, str], key: Any) -> str:
     return table.get(raw, str(key or "?"))
 
 
+def _clip(text: Any, limit: int) -> str:
+    """Potong di batas kata, jangan pernah memotong di tengah kata."""
+    s = " ".join(str(text or "").split())
+    if len(s) <= limit:
+        return html.escape(s)
+    cut = s[:limit].rsplit(" ", 1)[0].rstrip(" ,;:.-–—")
+    return html.escape(cut + "…")
+
+
 def render(final: dict) -> str:
     d = final.get("decision") or {}
     t = final.get("trend") or {}
@@ -52,11 +61,11 @@ def render(final: dict) -> str:
         "",
         f"<b>1) Tren ({html.escape(str(final.get('trend_tf', '')))})</b> "
         f"{_t(BIAS_ID, t.get('bias'))} / {_t(STRENGTH_ID, t.get('strength'))}",
-        f"   {html.escape(str(t.get('rationale', '')))}",
+        f"   {_clip(t.get('rationale'), 400)}",
         f"<b>2) Validasi ({html.escape(str(final.get('validation_tf', '')))})</b> "
         f"{_t(PHASE_ID, v.get('phase'))} — sepakat: "
         f"{'ya' if v.get('agrees_with_trend') else 'tidak'}",
-        f"   {html.escape(str(v.get('pattern', '')))} | level invalidasi {_p(v.get('invalidation_level'))}",
+        f"   {_clip(v.get('pattern'), 240)} | level invalidasi {_p(v.get('invalidation_level'))}",
         f"<b>3) Area kritis ({html.escape(str(final.get('critical_tf', '')))})</b>",
         f"   support {_p(c.get('nearest_support'))} | resistensi {_p(c.get('nearest_resistance'))}",
     ]
@@ -64,7 +73,7 @@ def render(final: dict) -> str:
     for z in (c.get("zones") or [])[:4]:
         lines.append(
             f"   • {_t(ZONE_ID, z.get('type'))} "
-            f"{_p(z.get('low'))}–{_p(z.get('high'))}: {html.escape(str(z.get('why', ''))[:80])}"
+            f"{_p(z.get('low'))}–{_p(z.get('high'))}: {_clip(z.get('why'), 160)}"
         )
 
     lines += ["", "<b>4) Keputusan</b>"]
@@ -74,16 +83,16 @@ def render(final: dict) -> str:
             f"TP <code>{_p(d.get('take_profit'))}</code>  RR <b>{d.get('rr')}</b>",
         ]
     else:
-        lines.append(f"   pemicu: {html.escape(str(c.get('entry_trigger', '—'))[:120])}")
+        lines.append(f"   pemicu: {_clip(c.get('entry_trigger') or '—', 400)}")
 
     for r in (d.get("reasons") or [])[:4]:
-        lines.append(f"   + {html.escape(str(r)[:120])}")
+        lines.append(f"   + {_clip(r, 240)}")
     for vt in (d.get("vetoes") or [])[:4]:
-        lines.append(f"   − {html.escape(str(vt)[:120])}")
+        lines.append(f"   − {_clip(vt, 240)}")
 
     if final.get("errors"):
         lines += ["", "<i>kesalahan:</i>"] + [
-            f"   {html.escape(str(e)[:100])}" for e in final["errors"][:3]
+            f"   {_clip(e, 160)}" for e in final["errors"][:3]
         ]
 
     return "\n".join(lines)
