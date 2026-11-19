@@ -158,6 +158,7 @@ def get_provider(name: str) -> MarketProvider:
             path=s.mt5_path,
             timeout=s.mt5_timeout,
             suffix=s.mt5_symbol_suffix,
+            engine=s.mt5_engine,
         )
     raise ValueError(f"unsupported MARKET_PROVIDER={name!r}")
 

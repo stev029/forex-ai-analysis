@@ -172,6 +172,65 @@ def test_mt5linux_bridge_is_instantiated(monkeypatch):
     assert market_mt5._is_bridge(api) is True
 
 
+def test_bridge_passes_engine_when_supported(monkeypatch):
+    """mt5linux 1.x menerima engine; 0.2.x tidak, jadi harus difilter."""
+    from forex_agents import market_mt5
+
+    seen: dict = {}
+
+    class Bridge1x:
+        def __init__(self, host="localhost", port=18812, timeout=300, engine="auto"):
+            seen.update(host=host, port=port, timeout=timeout, engine=engine)
+
+    pkg = types.ModuleType("mt5linux")
+    pkg.MetaTrader5 = Bridge1x
+    monkeypatch.setitem(sys.modules, "mt5linux", pkg)
+    monkeypatch.setitem(sys.modules, "MetaTrader5", None)
+
+    market_mt5._import_mt5("127.0.0.1", 18812, 300, "udocker")
+    assert seen == {"host": "127.0.0.1", "port": 18812, "timeout": 300, "engine": "udocker"}
+
+
+def test_bridge_omits_engine_for_02x(monkeypatch):
+    from forex_agents import market_mt5
+
+    seen: dict = {}
+
+    class Bridge02x:
+        def __init__(self, host="localhost", port=18812):
+            seen.update(host=host, port=port)
+
+    pkg = types.ModuleType("mt5linux")
+    pkg.MetaTrader5 = Bridge02x
+    monkeypatch.setitem(sys.modules, "mt5linux", pkg)
+    monkeypatch.setitem(sys.modules, "MetaTrader5", None)
+
+    market_mt5._import_mt5("127.0.0.1", 18812, 300, "auto")
+    assert seen == {"host": "127.0.0.1", "port": 18812}
+
+
+def test_bridge_start_failure_becomes_mt5unavailable(monkeypatch):
+    """Tanpa docker/udocker, mt5linux 1.x raise RuntimeError -> MT5Unavailable."""
+    from forex_agents import market_mt5
+
+    class Bridge:
+        def __init__(self, host="localhost", port=18812, timeout=300, engine="auto"):
+            raise RuntimeError(
+                "No container runtime available. engine='auto' but neither docker "
+                "nor udocker is installed."
+            )
+
+    pkg = types.ModuleType("mt5linux")
+    pkg.MetaTrader5 = Bridge
+    monkeypatch.setitem(sys.modules, "mt5linux", pkg)
+    monkeypatch.setitem(sys.modules, "MetaTrader5", None)
+
+    with pytest.raises(MT5Unavailable) as err:
+        market_mt5._import_mt5()
+    assert "No container runtime available" in str(err.value)
+    assert "docker/udocker" in str(err.value)
+
+
 def test_connect_does_not_pass_host_to_initialize(monkeypatch):
     fake = _install(monkeypatch, FakeMT5())
     p = MT5Provider(login=1234, password="pw", server="Broker-Demo")

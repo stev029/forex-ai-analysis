@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     mt5_server: str = ""
     mt5_path: str = ""
     mt5_timeout: int = 300
+    mt5_engine: str = "auto"
     mt5_symbol_suffix: str = ""
 
     min_rr: float = Field(default=1.5, ge=0.5)

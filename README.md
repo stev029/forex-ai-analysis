@@ -173,6 +173,22 @@ pip install MetaTrader5      # Windows / Wine
 pip install mt5linux         # Linux / ARM bridge
 ```
 
+Dua generasi `mt5linux` berperilaku beda dan `_import_mt5()` menyesuaikan sendiri lewat
+`inspect.signature`:
+
+| versi | konstruktor | butuh container |
+|---|---|---|
+| `0.2.x` | `MetaTrader5(host, port)` | tidak — klien RPyC murni |
+| `1.x` | `MetaTrader5(host, port, timeout, engine=...)` | ya — docker atau udocker |
+
+`mt5linux` 1.x membuat container sendiri untuk menjalankan terminal MT5. Tanpa docker/udocker
+hasilnya `No container runtime available. engine='auto' but neither docker nor udocker is
+installed.` — `MT5Provider` membungkusnya jadi `MT5Unavailable` dengan saran perbaikan, dan
+`MARKET_FALLBACK` mengambil alih. Untuk klien murni tanpa container pakai `0.2.4` dan arahkan
+`MT5_HOST`/`MT5_PORT` ke terminal MT5 yang sudah jalan.
+
+`MT5_ENGINE` (`auto`/`docker`/`udocker`) hanya diteruskan bila versi mt5linux menerimanya.
+
 Konfigurasi `.env`:
 
 ```ini
@@ -185,6 +201,7 @@ MT5_PASSWORD=secret
 MT5_SERVER=Broker-Demo
 MT5_PATH=
 MT5_TIMEOUT=300
+MT5_ENGINE=auto         # auto | docker | udocker (mt5linux 1.x saja)
 MT5_SYMBOL_SUFFIX=      # mis. "m" atau ".m" untuk EURUSDm / EURUSD.m
 ```
 

@@ -9,6 +9,7 @@ Aktifkan dengan MARKET_PROVIDER=mt5 di .env.
 """
 from __future__ import annotations
 
+import inspect
 import logging
 import time
 import types
@@ -34,7 +35,8 @@ class MT5Unavailable(RuntimeError):
     """Dilempar saat terminal/package MT5 tidak bisa dipakai."""
 
 
-def _import_mt5(host: str = "127.0.0.1", port: int = 18812, timeout: int = 300) -> Any:
+def _import_mt5(host: str = "127.0.0.1", port: int = 18812, timeout: int = 300,
+                engine: str = "auto") -> Any:
     """Package asli (modul) atau bridge mt5linux (instance class)."""
     try:
         import MetaTrader5 as mt5  # type: ignore
@@ -49,8 +51,28 @@ def _import_mt5(host: str = "127.0.0.1", port: int = 18812, timeout: int = 300) 
             "package MetaTrader5 / mt5linux tidak terpasang; "
             "jalankan `pip install MetaTrader5` (Windows) atau `pip install mt5linux`"
         ) from exc
-    # mt5linux mengekspos class, bukan fungsi modul: harus di-instansiasi.
-    return Mt5Linux(host=host, port=port, timeout=timeout)
+
+    # Signature beda antar versi mt5linux:
+    #   0.1.x/0.2.x -> (host, port)
+    #   1.x         -> (host, port, timeout, engine, ...)
+    # Kirim hanya parameter yang benar-benar diterima, kalau tidak TypeError.
+    try:
+        accepted = set(inspect.signature(Mt5Linux.__init__).parameters)
+    except (TypeError, ValueError):  # pragma: no cover - signature aneh
+        accepted = {"self", "host", "port", "timeout"}
+    wanted = {"host": host, "port": port, "timeout": timeout, "engine": engine}
+    kwargs = {k: v for k, v in wanted.items() if k in accepted}
+    try:
+        return Mt5Linux(**kwargs)
+    except Exception as exc:  # noqa: BLE001 - mis. docker/udocker tidak ada
+        raise MT5Unavailable(
+            f"mt5linux gagal start ({type(exc).__name__}: {exc}). "
+            "Versi 1.x butuh container runtime (docker/udocker) untuk menjalankan "
+            "terminal MT5; pasang salah satunya atau pakai MT5_HOST ke terminal "
+            "yang sudah jalan. Alternatif tanpa container: "
+            "`pip install mt5linux==0.2.4` lalu jalankan terminal MT5 di Windows/Wine "
+            "dengan server RPyC di port 18812."
+        ) from exc
 
 
 def _is_bridge(api: Any) -> bool:
@@ -73,6 +95,7 @@ class MT5Provider:
         timeout: int = 300,
         suffix: str = "",
         cache_ttl: float = 0.0,
+        engine: str = "auto",
     ) -> None:
         self.host = host
         self.port = port
@@ -83,6 +106,7 @@ class MT5Provider:
         self.timeout = timeout
         self.suffix = suffix
         self.cache_ttl = cache_ttl
+        self.engine = engine
         self._mt5: Any | None = None
         self._connected = False
         self._cache: dict[tuple[str, str], tuple[float, pd.DataFrame]] = {}
@@ -91,7 +115,7 @@ class MT5Provider:
     # ---------------------------------------------------------------- koneksi
     def _api(self) -> Any:
         if self._mt5 is None:
-            self._mt5 = _import_mt5(self.host, self.port, self.timeout)
+            self._mt5 = _import_mt5(self.host, self.port, self.timeout, self.engine)
         return self._mt5
 
     def connect(self) -> Any:
