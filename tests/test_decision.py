@@ -4,7 +4,7 @@ from __future__ import annotations
 import pytest
 
 from forex_agents import nodes
-from forex_agents.render import _clip, render
+from forex_agents.render import render, split_message
 from forex_agents.schemas import DecisionOut
 
 
@@ -82,16 +82,19 @@ def test_render_escapes_html():
     assert "TIDAK ENTRY" in text
     assert "m15" in text and "m5" in text and "m1" in text
 
-def test_clip_never_cuts_mid_word():
-    words = "alpha beta gamma delta epsilon zeta eta theta iota kappa"
-    clipped = _clip(words, 20)
-    assert clipped.endswith("…")
-    body = clipped[:-1]
-    assert words.startswith(body)
-    assert words[len(body)] == " "
+def test_render_keeps_full_text_uncut():
+    long = " ".join(f"kata{i}" for i in range(200))
+    state = _state(trend={"bias": "bearish", "strength": "strong", "rationale": long},
+                   decision={"action": "NO_TRADE", "confidence": 10,
+                             "reasons": [long], "vetoes": [long]})
+    text = render(state)
+    assert text.count(long) == 3
+    assert "…" not in text
 
-def test_render_keeps_full_rationale_when_short():
-    rationale = "Harga di bawah EMA20 dan EMA50; susunan bearish."
-    state = _state(trend={"bias": "bearish", "strength": "strong",
-                          "rationale": rationale})
-    assert rationale in render(state)
+def test_split_message_keeps_every_line():
+    lines = [f"baris {i} " + "x" * 40 for i in range(200)]
+    text = "\n".join(lines)
+    chunks = split_message(text, limit=500)
+    assert len(chunks) > 1
+    assert all(len(c) <= 500 for c in chunks)
+    assert "\n".join(chunks) == text

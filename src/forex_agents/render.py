@@ -1,4 +1,8 @@
-"""Telegram rendering (Bahasa Indonesia). Plain text + HTML-escaped, no markdown traps."""
+"""Telegram rendering (Bahasa Indonesia). Plain text + HTML-escaped, no markdown traps.
+
+Tidak ada pemotongan teks: semua rationale/pattern/why/pemicu/reasons/vetoes
+ditampilkan utuh. Pesan panjang dipecah per baris oleh `split_message()`.
+"""
 from __future__ import annotations
 
 import html
@@ -24,6 +28,9 @@ ZONE_ID = {
     "liquidity_sweep": "sapuan likuiditas",
 }
 
+# Batas keras Telegram ~4096 karakter; sisakan ruang untuk tag HTML.
+MAX_CHUNK = 3500
+
 
 def _p(v: Any, nd: int = 5) -> str:
     try:
@@ -37,13 +44,28 @@ def _t(table: dict[str, str], key: Any) -> str:
     return table.get(raw, str(key or "?"))
 
 
-def _clip(text: Any, limit: int) -> str:
-    """Potong di batas kata, jangan pernah memotong di tengah kata."""
-    s = " ".join(str(text or "").split())
-    if len(s) <= limit:
-        return html.escape(s)
-    cut = s[:limit].rsplit(" ", 1)[0].rstrip(" ,;:.-–—")
-    return html.escape(cut + "…")
+def _esc(text: Any) -> str:
+    """Escape HTML dan rapikan spasi, tanpa memotong apa pun."""
+    return html.escape(" ".join(str(text or "").split()))
+
+
+def split_message(text: str, limit: int = MAX_CHUNK) -> list[str]:
+    """Pecah pesan panjang per baris utuh; tidak memotong kata maupun tag."""
+    if len(text) <= limit:
+        return [text]
+    chunks: list[str] = []
+    buf: list[str] = []
+    size = 0
+    for line in text.split("\n"):
+        add = len(line) + 1
+        if size + add > limit and buf:
+            chunks.append("\n".join(buf))
+            buf, size = [], 0
+        buf.append(line)
+        size += add
+    if buf:
+        chunks.append("\n".join(buf))
+    return chunks
 
 
 def render(final: dict) -> str:
@@ -55,44 +77,42 @@ def render(final: dict) -> str:
 
     icon = {"BUY": "🟢", "SELL": "🔴"}.get(action, "⚪")
     lines: list[str] = [
-        f"{icon} <b>{ACTION_ID.get(action, action)}</b> — {html.escape(str(final.get('symbol', '')))} "
-        f"<code>{html.escape(str(final.get('base_tf', '')))}</code>",
+        f"{icon} <b>{ACTION_ID.get(action, action)}</b> — {_esc(final.get('symbol'))} "
+        f"<code>{_esc(final.get('base_tf'))}</code>",
         f"keyakinan: <b>{d.get('confidence', 0)}</b>/100   harga: <code>{_p(final.get('price'))}</code>",
         "",
-        f"<b>1) Tren ({html.escape(str(final.get('trend_tf', '')))})</b> "
+        f"<b>1) Tren ({_esc(final.get('trend_tf'))})</b> "
         f"{_t(BIAS_ID, t.get('bias'))} / {_t(STRENGTH_ID, t.get('strength'))}",
-        f"   {_clip(t.get('rationale'), 400)}",
-        f"<b>2) Validasi ({html.escape(str(final.get('validation_tf', '')))})</b> "
+        f"   {_esc(t.get('rationale'))}",
+        f"<b>2) Validasi ({_esc(final.get('validation_tf'))})</b> "
         f"{_t(PHASE_ID, v.get('phase'))} — sepakat: "
         f"{'ya' if v.get('agrees_with_trend') else 'tidak'}",
-        f"   {_clip(v.get('pattern'), 240)} | level invalidasi {_p(v.get('invalidation_level'))}",
-        f"<b>3) Area kritis ({html.escape(str(final.get('critical_tf', '')))})</b>",
+        f"   {_esc(v.get('pattern'))} | level invalidasi {_p(v.get('invalidation_level'))}",
+        f"<b>3) Area kritis ({_esc(final.get('critical_tf'))})</b>",
         f"   support {_p(c.get('nearest_support'))} | resistensi {_p(c.get('nearest_resistance'))}",
     ]
 
-    for z in (c.get("zones") or [])[:4]:
+    for z in c.get("zones") or []:
         lines.append(
             f"   • {_t(ZONE_ID, z.get('type'))} "
-            f"{_p(z.get('low'))}–{_p(z.get('high'))}: {_clip(z.get('why'), 160)}"
+            f"{_p(z.get('low'))}–{_p(z.get('high'))}: {_esc(z.get('why'))}"
         )
 
     lines += ["", "<b>4) Keputusan</b>"]
     if action in ("BUY", "SELL"):
-        lines += [
+        lines.append(
             f"   entry <code>{_p(d.get('entry'))}</code>  SL <code>{_p(d.get('stop_loss'))}</code>  "
-            f"TP <code>{_p(d.get('take_profit'))}</code>  RR <b>{d.get('rr')}</b>",
-        ]
+            f"TP <code>{_p(d.get('take_profit'))}</code>  RR <b>{d.get('rr')}</b>"
+        )
     else:
-        lines.append(f"   pemicu: {_clip(c.get('entry_trigger') or '—', 400)}")
+        lines.append(f"   pemicu: {_esc(c.get('entry_trigger') or '—')}")
 
-    for r in (d.get("reasons") or [])[:4]:
-        lines.append(f"   + {_clip(r, 240)}")
-    for vt in (d.get("vetoes") or [])[:4]:
-        lines.append(f"   − {_clip(vt, 240)}")
+    for r in d.get("reasons") or []:
+        lines.append(f"   + {_esc(r)}")
+    for vt in d.get("vetoes") or []:
+        lines.append(f"   − {_esc(vt)}")
 
     if final.get("errors"):
-        lines += ["", "<i>kesalahan:</i>"] + [
-            f"   {_clip(e, 160)}" for e in final["errors"][:3]
-        ]
+        lines += ["", "<i>kesalahan:</i>"] + [f"   {_esc(e)}" for e in final["errors"]]
 
     return "\n".join(lines)

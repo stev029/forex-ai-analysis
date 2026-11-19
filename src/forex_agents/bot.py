@@ -11,7 +11,7 @@ from telegram.ext import Application, CommandHandler, ContextTypes
 
 from .config import get_settings
 from .memory import db_cm, recent_analyses, save_analysis
-from .render import render
+from .render import render, split_message
 from .runner import run_analysis
 from .timeframes import cascade, normalize_tf
 
@@ -107,7 +107,8 @@ async def cmd_analyze(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         log.exception("save_analysis failed")
         final.setdefault("errors", []).append(f"db: {exc}")
 
-    await msg.reply_text(render(final), parse_mode=ParseMode.HTML)
+    for part in split_message(render(final)):
+        await msg.reply_text(part, parse_mode=ParseMode.HTML)
 
 
 async def cmd_symbols(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
