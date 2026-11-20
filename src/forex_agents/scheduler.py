@@ -141,7 +141,7 @@ class Job:
 
 
 # -------------------------------------------------------------------- scheduler
-Runner = Callable[..., Awaitable[dict]]
+Runner = Callable[..., Awaitable[Any]]
 Deliver = Callable[[int, str], Awaitable[None]]
 Persist = Callable[[Job, str], Awaitable[None]]
 
@@ -256,8 +256,8 @@ class Scheduler:
         if self._runner is None:
             return
         try:
-            final = await asyncio.wait_for(
-                self._runner(job.symbol, job.base_tf, job.chat_id),
+            result = await asyncio.wait_for(
+                self._runner(job.symbol, job.base_tf, chat_id=job.chat_id),
                 timeout=ANALYSIS_TIMEOUT,
             )
         except asyncio.TimeoutError:
@@ -275,6 +275,10 @@ class Scheduler:
             return
 
         job.runs += 1
+        # run_analysis() mengembalikan (final, request_id); runner uji boleh dict saja.
+        final = result[0] if isinstance(result, tuple) else result
+        if not isinstance(final, dict):
+            final = {"symbol": job.symbol, "base_tf": job.base_tf, "errors": ["hasil kosong"]}
         if self._persist is not None:
             try:
                 await self._persist(job, "run")

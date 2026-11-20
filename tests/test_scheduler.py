@@ -103,7 +103,7 @@ def _sched(**kw):
     async def deliver(chat_id: int, text: str) -> None:
         sent.append((chat_id, text))
 
-    async def runner(symbol, tf, chat_id):
+    async def runner(symbol, tf, *, chat_id=None):
         return {
             "symbol": symbol,
             "base_tf": tf,
@@ -212,7 +212,7 @@ async def test_deliver_failure_is_swallowed():
     async def deliver(*_a):
         raise RuntimeError("chat diblokir")
 
-    async def runner(symbol, tf, chat_id):
+    async def runner(symbol, tf, *, chat_id=None):
         return {"symbol": symbol, "base_tf": tf, "decision": {"action": "NO_TRADE"}}
 
     s = Scheduler(deliver, runner=runner)
@@ -255,3 +255,41 @@ def test_sleep_for_capped():
 
 def test_per_chat_limit_constant():
     assert MAX_JOBS_PER_CHAT >= 1
+
+
+@pytest.mark.asyncio
+async def test_runner_receives_chat_id_as_keyword_and_unpacks_tuple():
+    """run_analysis(symbol, base_tf, *, chat_id=...) -> (final, rid)."""
+    sent: list[tuple[int, str]] = []
+    seen: dict = {}
+
+    async def deliver(chat_id, text):
+        sent.append((chat_id, text))
+
+    async def runner(symbol, base_tf, *, chat_id=None):
+        seen["args"] = (symbol, base_tf, chat_id)
+        return ({"symbol": symbol, "base_tf": base_tf,
+                 "decision": {"action": "NO_TRADE", "confidence": 5}}, "rid123")
+
+    s = Scheduler(deliver, runner=runner)
+    job = s.add(7, "XAUUSD", "m1", 15)
+    job.next_run = time.time() - 1
+    await s.tick()
+    assert seen["args"] == ("XAUUSD", "m1", 7)
+    assert job.runs == 1
+    assert sent and "TIDAK ENTRY" in sent[0][1]
+
+
+@pytest.mark.asyncio
+async def test_runner_non_dict_result_is_replaced():
+    async def deliver(*_a):
+        raise AssertionError("tidak boleh mengirim")
+
+    async def runner(*_a, **_k):
+        return None
+
+    s = Scheduler(deliver, runner=runner)
+    job = s.add(1, "EURUSD", "m1", 15)
+    job.next_run = time.time() - 1
+    await s.tick()
+    assert job.runs == 1

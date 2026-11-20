@@ -1,6 +1,7 @@
 """TradingView provider tests — no websocket, no network. Fake client injected."""
 from __future__ import annotations
 
+import asyncio
 import sys
 import types
 
@@ -251,3 +252,63 @@ def test_run_wraps_unexpected_errors(monkeypatch):
     with pytest.raises(TVUnavailable) as err:
         p._run(lambda: boom())
     assert "kaboom" in str(err.value)
+
+
+@pytest.mark.asyncio
+async def test_afetch_uses_loop_without_extra_thread(monkeypatch):
+    """Jalur bot: afetch harus jalan di loop yang sama, tanpa threading."""
+    import threading
+
+    holder = _install(monkeypatch)
+    p = TradingViewProvider(timeout=5)
+    before = threading.active_count()
+    df = await p.afetch("EURUSD", "m1", bars=60)
+    assert len(df) == 3
+    assert holder["chart"].subscribed == ("FX:EURUSD", "1", 300)
+    assert threading.active_count() == before
+
+
+@pytest.mark.asyncio
+async def test_aquote_reports_lag(monkeypatch):
+    _install(monkeypatch)
+    p = TradingViewProvider(timeout=5)
+    q = await p.aquote("EURUSD")
+    assert q["price"] == 1.15
+    assert q["source"] == "tradingview"
+    assert isinstance(q["lag_s"], int)
+
+
+@pytest.mark.asyncio
+async def test_afetch_retries_handshake_timeout(monkeypatch):
+    _install(monkeypatch)
+    p = TradingViewProvider(timeout=5, retries=3)
+    calls = {"n": 0}
+    real = p._fetch_async
+
+    async def flaky(ticker, tf, count):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise TVUnavailable("timed out during opening handshake")
+        return await real(ticker, tf, count)
+
+    monkeypatch.setattr(p, "_fetch_async", flaky)
+    async def _no_sleep(*_a, **_k):
+        return None
+
+    monkeypatch.setattr("asyncio.sleep", _no_sleep)
+    df = await p.afetch("EURUSD", "m1", bars=60)
+    assert calls["n"] == 2
+    assert len(df) == 3
+
+
+@pytest.mark.asyncio
+async def test_afetch_empty_frame_raises(monkeypatch):
+    _install(monkeypatch)
+    p = TradingViewProvider(timeout=5)
+
+    async def empty(*_a, **_k):
+        return _periods_to_frame({})
+
+    monkeypatch.setattr(p, "_fetch_async", empty)
+    with pytest.raises(TVUnavailable):
+        await p.afetch("EURUSD", "m1", bars=60)

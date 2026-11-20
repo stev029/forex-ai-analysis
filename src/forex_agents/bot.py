@@ -217,8 +217,19 @@ async def _telegram_deliver(chat_id: int, text: str) -> None:
     app = SCHED_APP
     if app is None:
         raise RuntimeError("bot belum siap")
-    for part in split_message(text):
-        await app.bot.send_message(chat_id, part, parse_mode=ParseMode.HTML)
+    await app.bot.send_message(chat_id, text, parse_mode=ParseMode.HTML)
+
+
+async def _scheduled_run(symbol: str, base_tf: str, *, chat_id: int | None = None):
+    """run_analysis + simpan ke tabel analyses, dipakai scheduler."""
+    final, rid = await run_analysis(symbol, base_tf, chat_id=chat_id)
+    try:
+        async with db_cm() as conn:
+            await save_analysis(conn, request_id=rid, chat_id=chat_id, state=final)
+    except Exception as exc:  # noqa: BLE001 - DB tidak boleh membatalkan kiriman
+        log.exception("save_analysis jadwal gagal")
+        final.setdefault("errors", []).append(f"db: {exc}")
+    return final
 
 
 SCHED_APP: Application | None = None
@@ -337,7 +348,7 @@ async def cmd_schedule(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 async def _post_init(app: Application) -> None:
     global SCHED, SCHED_APP
     SCHED_APP = app
-    SCHED = Scheduler(_telegram_deliver, runner=run_analysis, persist=_persist_touch)
+    SCHED = Scheduler(_telegram_deliver, runner=_scheduled_run, persist=_persist_touch)
     try:
         async with db_cm() as conn:
             rows = await list_schedules(conn)

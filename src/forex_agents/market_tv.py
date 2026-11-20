@@ -136,6 +136,67 @@ class TradingViewProvider:
         }
 
     # ------------------------------------------------------------------ async
+    async def afetch(self, symbol: str, timeframe: str, bars: int = 300) -> pd.DataFrame:
+        """Versi async: dipakai dari dalam event loop bot tanpa thread tambahan.
+
+        `fetch()` sinkron memindahkan pekerjaan ke thread dengan loop sendiri.
+        Di proot/Termux pola itu membuat epoll loop utama mati dengan
+        `OSError: [Errno 38] Function not implemented`, jadi jalur bot memakai
+        coroutine ini.
+        """
+        tf = normalize_tf(timeframe)
+        ticker = to_tv_symbol(symbol, self.exchange)
+        key = (ticker, tf)
+        now = time.time()
+        with self._lock:
+            hit = self._cache.get(key)
+        if hit and self.cache_ttl > 0 and now - hit[0] < self.cache_ttl:
+            return hit[1].tail(bars).copy()
+
+        want = max(int(bars), 1)
+        df = await self._afetch_with_retry(ticker, tf, max(want, self.range_count))
+        if df.empty:
+            raise TVUnavailable(f"no data for {ticker} {tf} from TradingView")
+        df = df.tail(want)
+        with self._lock:
+            self._cache[key] = (now, df)
+        return df.copy()
+
+    async def aquote(self, symbol: str, ttl: float = 5.0) -> dict:
+        ticker = to_tv_symbol(symbol, self.exchange)
+        df = await self.afetch(symbol, "m1", bars=60)
+        stamp = df.index[-1]
+        price = float(df["close"].iloc[-1])
+        lag = max(int((pd.Timestamp.now(tz="UTC") - stamp).total_seconds()), 0)
+        return {
+            "price": price,
+            "time": str(stamp),
+            "lag_s": lag,
+            "ticker": ticker,
+            "source": "tradingview",
+        }
+
+    async def _afetch_with_retry(self, ticker: str, tf: str, count: int) -> pd.DataFrame:
+        last: Exception | None = None
+        for attempt in range(1, self.retries + 1):
+            try:
+                return await self._fetch_async(ticker, tf, count)
+            except TVUnavailable as exc:
+                last = exc
+                text = str(exc).lower()
+                retryable = any(
+                    k in text
+                    for k in ("handshake", "timeout", "timed out", "connection", "closed")
+                )
+                if attempt >= self.retries or not retryable:
+                    raise
+                log.warning(
+                    "TradingView %s %s gagal (attempt %d/%d): %s",
+                    ticker, tf, attempt, self.retries, exc,
+                )
+                await asyncio.sleep(0.8 * attempt)
+        raise last  # pragma: no cover
+
     def _run_with_retry(self, ticker: str, tf: str, count: int) -> pd.DataFrame:
         """Handshake TradingView kadang timeout; ulangi beberapa kali."""
         last: Exception | None = None

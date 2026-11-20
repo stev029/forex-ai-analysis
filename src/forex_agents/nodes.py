@@ -1,6 +1,7 @@
 """Graph nodes: fetch -> trend -> validation -> critical -> decision."""
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import Any
@@ -58,6 +59,27 @@ def _fmt(obj: Any) -> str:
     return json.dumps(obj, indent=2, default=str)
 
 
+async def _fetch_df(provider: Any, symbol: str, tf: str, bars: int):
+    """Ambil bar tanpa memblokir event loop.
+
+    Provider yang punya `afetch` dipakai langsung; provider sinkron (yfinance)
+    dipindah ke thread. Jalur `fetch()` TradingView sengaja tidak dipakai dari
+    dalam loop bot karena membuat thread + loop sendiri, dan pola itu di proot
+    memicu `OSError: [Errno 38] Function not implemented` / futex abort.
+    """
+    afetch = getattr(provider, "afetch", None)
+    if afetch is not None:
+        return await afetch(symbol, tf, bars)
+    return await asyncio.to_thread(provider.fetch, symbol, tf, bars)
+
+
+async def _quote(provider: Any, symbol: str) -> dict:
+    aquote = getattr(provider, "aquote", None)
+    if aquote is not None:
+        return await aquote(symbol)
+    return await asyncio.to_thread(provider.quote, symbol)
+
+
 async def fetch_node(state: AnalysisState) -> dict:
     s = get_settings()
     tf_map = cascade(state["base_tf"])
@@ -74,7 +96,7 @@ async def fetch_node(state: AnalysisState) -> dict:
     for name in names:
         try:
             candidate = get_provider(name)
-            candidate.fetch(state["symbol"], tf_map["critical"], bars=60)
+            await _fetch_df(candidate, state["symbol"], tf_map["critical"], 60)
         except Exception as exc:  # noqa: BLE001 - provider mati, coba berikutnya
             errors.append(f"provider {name}: {exc}")
             log.warning("provider %s tidak bisa dipakai: %s", name, exc)
@@ -101,7 +123,7 @@ async def fetch_node(state: AnalysisState) -> dict:
     for role in ("trend", "validation", "critical"):
         tf = tf_map[role]
         try:
-            df = provider.fetch(state["symbol"], tf, bars=300)
+            df = await _fetch_df(provider, state["symbol"], tf, 300)
             snaps[tf] = snapshot(df, tf, pip=pip)
             trace.append(f"fetched {state['symbol']} {tf} ({len(df)} bars)")
         except Exception as exc:  # noqa: BLE001
@@ -111,7 +133,7 @@ async def fetch_node(state: AnalysisState) -> dict:
     # Harga acuan = quote tick terbaru, bukan close bar terakhir (bisa tertinggal 1-10 menit).
     quote: dict = {}
     try:
-        quote = provider.quote(state["symbol"])
+        quote = await _quote(provider, state["symbol"])
     except Exception as exc:  # noqa: BLE001 - quote is best effort
         errors.append(f"quote: {exc}")
         log.warning("quote failed for %s: %s", state["symbol"], exc)
