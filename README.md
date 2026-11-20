@@ -38,8 +38,9 @@ src/forex_agents/
   graph.py       StateGraph wiring + data gate
   memory.py      AsyncPostgresSaver checkpoints + analyses table
   runner.py      run_analysis() entrypoint
+  scheduler.py   jadwal otomatis per bar tutup TF target
   render.py      Telegram HTML renderer
-  bot.py         /analyze /tf /history /help
+  bot.py         /analyze /schedule /tf /history /help
   cli.py         one-shot CLI
 run.sh           Termux/proot launcher
 run-server.sh    Ubuntu server launcher (venv + systemd)
@@ -47,6 +48,8 @@ requirements-dev.txt  pytest + pytest-asyncio
 tests/test_core.py
 tests/test_decision.py
 tests/test_tv.py
+tests/test_llm.py
+tests/test_scheduler.py
 ```
 
 ## Setup (Termux → Ubuntu proot)
@@ -127,7 +130,39 @@ Telegram:
 /analyze EURUSD m1
 /tf m1
 /history
+/schedule add XAUUSD m1          # otomatis tiap 15 menit
+/schedule add EURUSD m1 30m      # interval custom
+/schedule list
+/schedule del <ID|all>
+/schedule run <ID>
 ```
+
+## Jadwal otomatis (cron ala bar tutup)
+
+`/schedule add <SIMBOL> <TF> [INTERVAL]` menjalankan cascade berulang tiap bar TF target
+terbesar tutup. Interval default = panjang TF `trend` dari cascade (dua langkah di atas TF dasar):
+
+| TF dasar | target TF | interval default |
+|---|---|---|
+| `m1` | `m5` + `m15` | 15 menit |
+| `m5` | `m15` + `m30` | 30 menit |
+| `m15` | `m30` + `h1` | 1 jam |
+| `m30` | `h1` + `h4` | 4 jam |
+| `h1` | `h4` + `d1` | 1 hari |
+| `h4` | `d1` + `w1` | 1 minggu |
+
+Interval custom: `15`, `15m`, `15mnt`, `30 menit`, `2h`, `1d`, `1w` (menit–minggu).
+
+Detail perilaku:
+
+- Bar `m15`/`h1` disejajarkan ke grid UTC (`:00 :15 :30 :45`), harian/mingguan ke tengah malam UTC.
+- Ada grace 5 detik setelah bar tutup supaya provider sudah menerbitkan bar terakhir.
+- Job disimpan di tabel `schedules` (Postgres) dan dipulihkan saat bot start; `next_run` dihitung
+  ulang agar tidak menumpuk setelah downtime.
+- Maks 5 jadwal per chat, 20 total. Satu job gagal/timeout tidak mematikan loop; kegagalan
+  dilaporkan ke chat dan job dinonaktifkan otomatis setelah 5 kali gagal.
+- Scheduler hidup di proses bot (`forex-bot`), jadi bot harus jalan agar jadwal berjalan.
+- Cek cepat tanpa menunggu: `python .tmp/smoke_sched.py` atau `/schedule run <ID>`.
 
 ## Symbols
 

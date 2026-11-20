@@ -78,6 +78,19 @@ END $$;
 CREATE UNIQUE INDEX IF NOT EXISTS analyses_request_id_key ON analyses (request_id);
 CREATE INDEX IF NOT EXISTS analyses_symbol_tf_idx ON analyses (symbol, base_tf, created_at DESC);
 CREATE INDEX IF NOT EXISTS analyses_chat_idx ON analyses (chat_id, created_at DESC);
+
+-- jadwal analisis otomatis (/schedule)
+CREATE TABLE IF NOT EXISTS schedules (
+    id            TEXT PRIMARY KEY,
+    chat_id       BIGINT NOT NULL,
+    symbol        TEXT NOT NULL,
+    base_tf       TEXT NOT NULL,
+    interval_min  INT NOT NULL,
+    enabled       BOOLEAN NOT NULL DEFAULT true,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_run      TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS schedules_chat_idx ON schedules (chat_id);
 """
 
 
@@ -162,5 +175,65 @@ async def recent_analyses(conn, limit: int = 5) -> list[dict]:
         rows = await cur.fetchall()
     return [
         {"symbol": r[0], "tf": r[1], "action": r[2], "confidence": r[3], "at": r[4].isoformat()}
+        for r in rows
+    ]
+
+
+# ------------------------------------------------------------------ schedules
+async def save_schedule(conn, job) -> None:
+    """Upsert satu jadwal; aman dipanggil walau DATABASE_URL kosong."""
+    if conn is None:
+        return
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            INSERT INTO schedules (id, chat_id, symbol, base_tf, interval_min, enabled)
+            VALUES (%s,%s,%s,%s,%s,%s)
+            ON CONFLICT (id) DO UPDATE SET
+                interval_min = EXCLUDED.interval_min,
+                enabled      = EXCLUDED.enabled,
+                symbol       = EXCLUDED.symbol,
+                base_tf      = EXCLUDED.base_tf
+            """,
+            (job.id, job.chat_id, job.symbol, job.base_tf, job.interval_min, job.enabled),
+        )
+
+
+async def delete_schedule(conn, job_id: str) -> None:
+    if conn is None:
+        return
+    async with conn.cursor() as cur:
+        await cur.execute("DELETE FROM schedules WHERE id = %s", (job_id,))
+
+
+async def touch_schedule(conn, job_id: str, *, failures: int = 0) -> None:
+    """Catat eksekusi terakhir; job yang sering gagal dinonaktifkan."""
+    if conn is None:
+        return
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "UPDATE schedules SET last_run = now(), enabled = (enabled AND %s < 5) WHERE id = %s",
+            (failures, job_id),
+        )
+
+
+async def list_schedules(conn) -> list[dict]:
+    if conn is None:
+        return []
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "SELECT id, chat_id, symbol, base_tf, interval_min, enabled "
+            "FROM schedules ORDER BY created_at"
+        )
+        rows = await cur.fetchall()
+    return [
+        {
+            "id": r[0],
+            "chat_id": r[1],
+            "symbol": r[2],
+            "base_tf": r[3],
+            "interval_min": r[4],
+            "enabled": r[5],
+        }
         for r in rows
     ]
