@@ -144,21 +144,18 @@ def get_provider(name: str) -> MarketProvider:
     name = (name or "yfinance").lower()
     if name == "yfinance":
         return YFinanceProvider()
-    if name in ("mt5", "metatrader5", "metatrader"):
+    if name in ("tradingview", "tv", "trading_view"):
         from .config import get_settings
-        from .market_mt5 import MT5Provider
+        from .market_tv import TradingViewProvider
 
         s = get_settings()
-        return MT5Provider(
-            host=s.mt5_host,
-            port=s.mt5_port,
-            login=s.mt5_login or None,
-            password=s.mt5_password,
-            server=s.mt5_server,
-            path=s.mt5_path,
-            timeout=s.mt5_timeout,
-            suffix=s.mt5_symbol_suffix,
-            engine=s.mt5_engine,
+        return TradingViewProvider(
+            exchange=s.tv_exchange,
+            server=s.tv_server,
+            timeout=s.tv_timeout,
+            range_count=s.tv_range,
+            retries=s.tv_retries,
+            debug=s.tv_debug,
         )
     raise ValueError(f"unsupported MARKET_PROVIDER={name!r}")
 
@@ -168,19 +165,24 @@ def last_price(df: pd.DataFrame) -> float:
 
 # Pip size per instrument class. FX majors 0.0001, JPY crosses 0.01, metals 0.1,
 # indices/crypto/oil 1.0. Wrong pip size makes ATR/stop comparisons meaningless.
-_METALS = {"GC=F", "SI=F", "XAUUSD", "XAGUSD", "GOLD", "SILVER", "XAU", "XAG"}
+_METALS = {"GC=F", "SI=F", "XAUUSD", "XAGUSD", "GOLD", "SILVER", "XAU", "XAG",
+           "TVC:GOLD", "TVC:SILVER"}
 _INDEX_LIKE = {"^DJI", "^NDX", "^GSPC", "DX-Y.NYB", "CL=F", "BZ=F",
-               "BTC-USD", "ETH-USD", "US30", "NAS100", "SPX500", "USOIL", "DXY"}
+               "BTC-USD", "ETH-USD", "US30", "NAS100", "SPX500", "USOIL", "DXY",
+               "TVC:DJI", "TVC:NDX", "TVC:SPX", "TVC:USOIL", "TVC:UKOIL", "TVC:DXY",
+               "BITSTAMP:BTCUSD", "BITSTAMP:ETHUSD", "BINANCE:BTCUSDT", "BINANCE:ETHUSDT"}
 
 
 def pip_size(symbol: str) -> float:
     s = symbol.strip().upper()
     ticker = to_yf_symbol(s)
-    if s in _METALS or ticker in _METALS:
+    # TradingView ticker berprefix exchange (FX:EURUSD, TVC:GOLD): cek bagian lokalnya.
+    local = s.split(":", 1)[1] if ":" in s else s
+    if s in _METALS or ticker in _METALS or local in _METALS:
         return 0.1
-    if s in _INDEX_LIKE or ticker in _INDEX_LIKE or ticker.startswith("^"):
+    if s in _INDEX_LIKE or ticker in _INDEX_LIKE or local in _INDEX_LIKE or ticker.startswith("^"):
         return 1.0
-    if len(s) == 6 and s.isalpha() and s.endswith("JPY"):
+    if len(local) == 6 and local.isalpha() and local.endswith("JPY"):
         return 0.01
     if "=" in ticker and not ticker.endswith("=X"):
         return 1.0

@@ -29,7 +29,7 @@ src/forex_agents/
   config.py      pydantic-settings env loading
   timeframes.py  ladder, aliases, cascade(), yfinance interval map
   market.py      YFinanceProvider + get_provider() dispatch
-  market_mt5.py  MT5Provider (MetaTrader5 / mt5linux bridge)
+  market_tv.py     TradingViewProvider (websocket tradingview-api)
   indicators.py  EMA/ATR/RSI/MACD, swing points, structure, snapshot()
   schemas.py     Pydantic contracts per stage
   llm.py         ChatOpenAI factory + structured() with JSON fallback
@@ -46,7 +46,7 @@ run-server.sh    Ubuntu server launcher (venv + systemd)
 requirements-dev.txt  pytest + pytest-asyncio
 tests/test_core.py
 tests/test_decision.py
-tests/test_mt5.py
+tests/test_tv.py
 ```
 
 ## Setup (Termux → Ubuntu proot)
@@ -154,65 +154,60 @@ Telegram `/symbols` prints the table.
 
 | nilai | sumber | catatan |
 |---|---|---|
-| `yfinance` (default) | Yahoo Finance | tanpa login, delay FX ~70–100 detik, emas futures ~10 menit |
-| `mt5` | MetaTrader 5 terminal | tick real-time dari broker, butuh terminal MT5 yang login |
+| `tradingview` (default) | TradingView websocket | anonim, tanpa terminal/broker, lag ~10–60 detik |
+| `yfinance` | Yahoo Finance | tanpa login, delay FX ~70–100 detik, emas futures ~10 menit |
 
-### MetaTrader 5
+### TradingView
 
-Dua jalur koneksi, dipilih otomatis oleh `_import_mt5()` di
-`src/forex_agents/market_mt5.py`:
-
-1. **Windows / Wine** — package `MetaTrader5` asli. Isi `MT5_PATH` ke `terminal64.exe`
-   (opsional) dan `MT5_LOGIN` / `MT5_PASSWORD` / `MT5_SERVER` untuk auto-login.
-2. **Linux / ARM (Termux proot)** — bridge `mt5linux` (RPyC). Terminal MT5 tetap harus jalan
-   di container docker/udocker yang disediakan `mt5linux`; klien hanya menyambung ke
-   `MT5_HOST:MT5_PORT` (default `127.0.0.1:18812`).
+`src/forex_agents/market_tv.py` — `TradingViewProvider` memakai package
+[`tradingview-api`](https://pypi.org/project/tradingview-api/) (modul import: `TradingView`).
+Tidak butuh MetaTrader, container, atau akun broker.
 
 ```bash
-pip install MetaTrader5      # Windows / Wine
-pip install mt5linux         # Linux / ARM bridge
+pip install tradingview-api   # butuh websockets + requests
 ```
 
-Dua generasi `mt5linux` berperilaku beda dan `_import_mt5()` menyesuaikan sendiri lewat
-`inspect.signature`:
+Alur: `Client.connect()` → `ChartSession.subscribe(ticker, tf, count)` → tunggu event
+`update` → `periods` dipetakan ke DataFrame OHLCV ber-indeks UTC.
 
-| versi | konstruktor | butuh container |
-|---|---|---|
-| `0.2.x` | `MetaTrader5(host, port)` | tidak — klien RPyC murni |
-| `1.x` | `MetaTrader5(host, port, timeout, engine=...)` | ya — docker atau udocker |
+Tiga jebakan library yang sudah ditangani di provider:
 
-`mt5linux` 1.x membuat container sendiri untuk menjalankan terminal MT5. Tanpa docker/udocker
-hasilnya `No container runtime available. engine='auto' but neither docker nor udocker is
-installed.` — `MT5Provider` membungkusnya jadi `MT5Unavailable` dengan saran perbaikan, dan
-`MARKET_FALLBACK` mengambil alih. Untuk klien murni tanpa container pakai `0.2.4` dan arahkan
-`MT5_HOST`/`MT5_PORT` ke terminal MT5 yang sudah jalan.
+1. `Client.send()` menahan semua paket selama `logged` masih `False` dan hanya mem-flush queue
+   di `connect()`. Tanpa hook `client.on_logged(lambda *_: client._send_queue())` yang
+   didaftarkan **sebelum** `connect()`, `subscribe` tidak pernah terkirim dan session diam
+   sampai timeout.
+2. Node graph berjalan di dalam event loop aktif, jadi `asyncio.run()` melempar
+   `RuntimeError: asyncio.run() cannot be called from a running event loop`. `_run()` mendeteksi
+   loop aktif lalu menjalankan coroutine di thread terpisah dengan loop sendiri.
+3. Handshake `wss://data.tradingview.com` kadang timeout (`TimeoutError: timed out during
+   opening handshake`). `_run_with_retry()` mengulang sampai `TV_RETRIES` kali dengan backoff
+   `0.8 * attempt` detik, tapi hanya untuk error yang mengandung `handshake`/`timeout`/
+   `connection`/`closed`.
 
-`MT5_ENGINE` (`auto`/`docker`/`udocker`) hanya diteruskan bila versi mt5linux menerimanya.
+Pemetaan timeframe (`TV_TF`): `m1→1`, `m5→5`, `m15→15`, `m30→30`, `h1→60`, `h4→240`,
+`d1→1D`, `w1→1W`.
+
+Pemetaan simbol (`to_tv_symbol`): default prefix exchange `FX`, jadi `EURUSD → FX:EURUSD`.
+Instrumen non-FX dipetakan ke ticker TradingView: `XAUUSD→TVC:GOLD`, `XAGUSD→TVC:SILVER`,
+`BTCUSD→BITSTAMP:BTCUSD`, `NAS100→TVC:NDX`, `SPX500→TVC:SPX`, `USOIL→TVC:USOIL`,
+`DXY→TVC:DXY`. Simbol yang sudah berprefix (`OANDA:EURUSD`) dipakai apa adanya.
 
 Konfigurasi `.env`:
 
 ```ini
-MARKET_PROVIDER=mt5
-MARKET_FALLBACK=yfinance   # dipakai otomatis bila mt5 tidak bisa connect
-MT5_HOST=127.0.0.1
-MT5_PORT=18812
-MT5_LOGIN=12345678
-MT5_PASSWORD=secret
-MT5_SERVER=Broker-Demo
-MT5_PATH=
-MT5_TIMEOUT=300
-MT5_ENGINE=auto         # auto | docker | udocker (mt5linux 1.x saja)
-MT5_SYMBOL_SUFFIX=      # mis. "m" atau ".m" untuk EURUSDm / EURUSD.m
+MARKET_PROVIDER=tradingview
+MARKET_FALLBACK=yfinance   # dipakai otomatis bila websocket diblokir
+TV_EXCHANGE=FX             # FX | OANDA | FX_IDC | ...
+TV_SERVER=data             # data | prodata | widgetdata
+TV_TIMEOUT=25              # detik menunggu bar pertama
+TV_RANGE=300               # bar yang diminta per subscribe
+TV_RETRIES=3               # ulang saat handshake websocket timeout
+TV_DEBUG=false
 ```
 
-`MT5Provider` memakai `copy_rates_from_pos` untuk OHLCV (kolom `tick_volume` dipetakan ke
-`volume`) dan `symbol_info_tick` untuk quote — harga acuan = mid `(bid+ask)/2`, dan spread
-ikut dilaporkan. `pip_size()` tetap dipakai untuk normalisasi ATR; `MT5Provider.point()`
-memberi nilai point broker bila perlu pip yang persis.
-
-Batasan: tanpa terminal MT5 yang hidup, `MT5Provider` melempar `MT5Unavailable`. Di Termux
-murni (tanpa docker/udocker) tidak ada cara menjalankan terminal MT5, jadi `yfinance` tetap
-default.
+`quote()` memakai bar `m1` terbaru dan melaporkan `price`, `time`, `lag_s`, `ticker`, dan
+`source: tradingview`. Kegagalan apa pun dibungkus jadi `TVUnavailable` supaya `fetch_node`
+bisa pindah ke `MARKET_FALLBACK` dan mencatatnya di bagian `kesalahan:`.
 
 ### Fallback
 
@@ -221,7 +216,7 @@ bila `fetch()` pertama gagal. Provider yang gagal dicatat di `errors` dan tetap 
 bagian `kesalahan:` pada balasan, jadi tidak pernah senyap.
 
 ```ini
-MARKET_PROVIDER=mt5
+MARKET_PROVIDER=tradingview
 MARKET_FALLBACK=yfinance
 ```
 
@@ -231,10 +226,11 @@ MARKET_FALLBACK=yfinance
 pytest -q
 ```
 
-48 tests: cascade mapping (incl. clamp at `w1`), indicator finiteness, snapshot shape, structure
+56 tests: cascade mapping (incl. clamp at `w1`), indicator finiteness, snapshot shape, structure
 detection, decision guardrails (low RR, wrong SL/TP side, stop > 3x ATR), HTML escaping, symbol
-aliases, pip sizing, lag/quote helpers, dan MT5 provider dengan modul `MetaTrader5` palsu
-(fetch, cache TTL, suffix simbol, quote mid+spread, shutdown). No network or LLM calls.
+aliases, pip sizing, lag/quote helpers, dan TradingView provider dengan `TradingView.Client` /
+`ChartSession` palsu (subscribe, flush queue saat `logged`, cache TTL, quote lag, retry handshake,
+error → `TVUnavailable`, fetch di dalam event loop aktif). No network or LLM calls.
 
 ## Schema migration
 

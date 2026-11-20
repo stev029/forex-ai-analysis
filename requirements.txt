@@ -5,6 +5,7 @@ langchain-openai>=1.0
 psycopg[binary,pool]>=3.2
 python-telegram-bot>=21.0
 yfinance>=0.2.40
+tradingview-api>=1.0.1
 pandas>=2.0
 numpy>=1.26
 pydantic>=2.7
