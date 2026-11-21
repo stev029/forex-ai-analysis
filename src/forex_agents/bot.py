@@ -378,6 +378,9 @@ async def _post_shutdown(app: Application) -> None:
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    # httpx mencetak URL lengkap termasuk token bot -> naikkan ke WARNING.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpx2").setLevel(logging.WARNING)
     s = get_settings()
     if not s.telegram_bot_token:
         raise SystemExit("TELEGRAM_BOT_TOKEN belum diisi")
