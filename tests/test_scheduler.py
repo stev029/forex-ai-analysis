@@ -293,3 +293,87 @@ async def test_runner_non_dict_result_is_replaced():
     job.next_run = time.time() - 1
     await s.tick()
     assert job.runs == 1
+
+
+def test_pause_disables_job_and_keeps_next_run():
+    s, _ = _sched()
+    job = s.add(1, "XAUUSD", "m1", 15)
+    before = job.next_run
+    paused = s.pause(job.id, chat_id=1)
+    assert [j.id for j in paused] == [job.id]
+    assert job.enabled is False
+    assert job.next_run == before
+
+
+def test_pause_all_only_touches_own_chat():
+    s, _ = _sched()
+    mine = s.add(1, "XAUUSD", "m1", 15)
+    other = s.add(2, "EURUSD", "m1", 15)
+    paused = s.pause("all", chat_id=1)
+    assert [j.id for j in paused] == [mine.id]
+    assert mine.enabled is False
+    assert other.enabled is True
+
+
+def test_pause_is_idempotent_and_reports_nothing():
+    s, _ = _sched()
+    job = s.add(1, "XAUUSD", "m1", 15)
+    s.pause(job.id, chat_id=1)
+    assert s.pause(job.id, chat_id=1) == []
+
+
+def test_paused_job_is_not_due():
+    s, _ = _sched()
+    job = s.add(1, "EURUSD", "m1", 15)
+    job.next_run = time.time() - 1
+    s.pause(job.id, chat_id=1)
+    assert s.due() == []
+
+
+def test_resume_reschedules_next_bar_close_not_immediately():
+    s, _ = _sched()
+    job = s.add(1, "EURUSD", "m1", 15)
+    s.pause(job.id, chat_id=1)
+    now = 1_800_000_000.0
+    resumed = s.resume(job.id, chat_id=1, now=now)
+    assert [j.id for j in resumed] == [job.id]
+    assert job.enabled is True
+    assert job.next_run > now
+    assert job.next_run == next_run_at(15, now)
+
+
+def test_resume_reports_nothing_when_already_active():
+    s, _ = _sched()
+    job = s.add(1, "EURUSD", "m1", 15)
+    assert s.resume(job.id, chat_id=1) == []
+
+
+def test_remove_accepts_symbol_tf_selector():
+    s, _ = _sched()
+    job = s.add(1, "xauusd", "m1", 15)
+    removed = s.remove("XAUUSD:m1", chat_id=1)
+    assert [j.id for j in removed] == [job.id]
+    assert s.get(job.id) is None
+
+
+@pytest.mark.asyncio
+async def test_tick_skips_paused_then_runs_after_resume():
+    sent: list[tuple[int, str]] = []
+
+    async def deliver(chat_id, text):
+        sent.append((chat_id, text))
+
+    async def runner(symbol, base_tf, *, chat_id=None):
+        return {"symbol": symbol, "base_tf": base_tf, "decision": {"action": "NO_TRADE"}}
+
+    s = Scheduler(deliver, runner=runner)
+    job = s.add(1, "EURUSD", "m1", 15)
+    job.next_run = time.time() - 1
+    s.pause(job.id, chat_id=1)
+    await s.tick()
+    assert job.runs == 0 and sent == []
+
+    s.resume(job.id, chat_id=1, now=time.time() - 1000)
+    job.next_run = time.time() - 1
+    await s.tick()
+    assert job.runs == 1 and len(sent) == 1

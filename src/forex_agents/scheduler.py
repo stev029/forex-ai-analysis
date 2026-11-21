@@ -209,14 +209,7 @@ class Scheduler:
 
     def remove(self, selector: str, chat_id: int | None = None) -> list[Job]:
         """Hapus berdasarkan id, atau semua bila selector `all`."""
-        key = (selector or "").strip().lower()
-        targets_ = [
-            j
-            for j in self._jobs.values()
-            if (chat_id is None or j.chat_id == chat_id)
-            and (key in ("all", "semua", "*") or j.id == key
-                 or f"{j.symbol}:{j.base_tf}".lower() == key)
-        ]
+        targets_ = self._select(selector, chat_id)
         for job in targets_:
             self._jobs.pop(job.id, None)
         if targets_:
@@ -229,6 +222,39 @@ class Scheduler:
 
     def get(self, job_id: str) -> Job | None:
         return self._jobs.get(job_id)
+
+    def _select(self, selector: str, chat_id: int | None = None) -> list[Job]:
+        """Cocokkan job lewat id, `SYMBOL:TF`, atau `all`."""
+        key = (selector or "").strip().lower()
+        return [
+            j
+            for j in self.jobs(chat_id)
+            if key in ("all", "semua", "*")
+            or j.id == key
+            or f"{j.symbol}:{j.base_tf}".lower() == key
+        ]
+
+    def pause(self, selector: str, chat_id: int | None = None) -> list[Job]:
+        """Hentikan sementara tanpa menghapus; next_run tetap disimpan."""
+        targets_ = [j for j in self._select(selector, chat_id) if j.enabled]
+        for job in targets_:
+            job.enabled = False
+        if targets_:
+            self._wake.set()
+        return targets_
+
+    def resume(
+        self, selector: str, chat_id: int | None = None, now: float | None = None
+    ) -> list[Job]:
+        """Aktifkan lagi dan jadwalkan bar tutup berikutnya (bukan langsung tembak)."""
+        now = self._clock() if now is None else now
+        targets_ = [j for j in self._select(selector, chat_id) if not j.enabled]
+        for job in targets_:
+            job.enabled = True
+            job.next_run = next_run_at(job.interval_min, now, grace=self._grace)
+        if targets_:
+            self._wake.set()
+        return targets_
 
     def due(self, now: float | None = None) -> list[Job]:
         now = self._clock() if now is None else now

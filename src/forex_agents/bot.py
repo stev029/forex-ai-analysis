@@ -249,7 +249,7 @@ def _schedule_rows(chat_id: int) -> str:
         )
     lines = []
     for job in jobs:
-        status = "aktif" if job.enabled else "nonaktif"
+        status = "aktif" if job.enabled else "terjeda"
         lines.append(
             f"<code>{job.id}</code>  {job.symbol} {job.base_tf}"
             f"  tiap {human_interval(job.interval_min)}"
@@ -311,6 +311,40 @@ async def cmd_schedule(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         await msg.reply_text(_schedule_rows(chat.id), parse_mode=ParseMode.HTML)
         return
 
+    if sub in ("pause", "jeda", "stop", "hold"):
+        selector = args[0] if args else "all"
+        paused = SCHED.pause(selector, chat_id=chat.id)
+        if not paused:
+            await msg.reply_text(
+                f"tidak ada jadwal aktif yang cocok dengan '{selector}' di chat ini"
+            )
+            return
+        for job in paused:
+            await _persist_save(job)
+        names = ", ".join(f"{j.id} ({j.symbol} {j.base_tf})" for j in paused)
+        await msg.reply_text(
+            f"dijeda: {names}\nlanjutkan: <code>/schedule resume {paused[0].id}</code>",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    if sub in ("resume", "lanjut", "start", "unpause"):
+        selector = args[0] if args else "all"
+        resumed = SCHED.resume(selector, chat_id=chat.id)
+        if not resumed:
+            await msg.reply_text(
+                f"tidak ada jadwal terjeda yang cocok dengan '{selector}' di chat ini"
+            )
+            return
+        for job in resumed:
+            await _persist_save(job)
+        names = ", ".join(f"{j.id} ({j.symbol} {j.base_tf})" for j in resumed)
+        await msg.reply_text(
+            f"dilanjutkan: {names}\nberikutnya: {_fmt_ts(resumed[0].next_run)}",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
     if sub in ("del", "delete", "hapus", "rm", "-"):
         selector = args[0] if args else "all"
         removed = SCHED.remove(selector, chat_id=chat.id)
@@ -336,10 +370,13 @@ async def cmd_schedule(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     await msg.reply_text(
-        "subperintah: <code>add</code> | <code>list</code> | <code>del</code> | <code>run</code>\n"
+        "subperintah: <code>add</code> | <code>list</code> | <code>pause</code> | "
+        "<code>resume</code> | <code>del</code> | <code>run</code>\n"
         "contoh: <code>/schedule add XAUUSD m1</code>"
         " — tiap 15 menit (otomatis dari TF)\n"
         "contoh: <code>/schedule add EURUSD m1 30m</code> — interval custom\n"
+        "jeda: <code>/schedule pause &lt;ID&gt;</code> atau <code>/schedule pause all</code>\n"
+        "lanjut: <code>/schedule resume &lt;ID&gt;</code> atau <code>/schedule resume all</code>\n"
         f"{INTERVAL_HELP}",
         parse_mode=ParseMode.HTML,
     )

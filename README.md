@@ -133,6 +133,8 @@ Telegram:
 /schedule add XAUUSD m1          # otomatis tiap 15 menit
 /schedule add EURUSD m1 30m      # interval custom
 /schedule list
+/schedule pause <ID|all>
+/schedule resume <ID|all>
 /schedule del <ID|all>
 /schedule run <ID>
 ```
@@ -159,6 +161,11 @@ Detail perilaku:
 - Ada grace 5 detik setelah bar tutup supaya provider sudah menerbitkan bar terakhir.
 - Job disimpan di tabel `schedules` (Postgres) dan dipulihkan saat bot start; `next_run` dihitung
   ulang agar tidak menumpuk setelah downtime.
+- `/schedule pause <ID|all>` menjeda tanpa menghapus: job tetap di DB (`enabled=false`), `next_run`
+  terakhir dipertahankan, dan tidak pernah jatuh tempo sampai di-`resume`.
+- `/schedule resume <ID|all>` mengaktifkan lagi dan menjadwalkan bar tutup berikutnya (bukan
+  langsung tembak), jadi tidak ada burst analisis setelah jeda panjang.
+- Selector menerima `<ID>`, `<SIMBOL>:<TF>` (mis. `XAUUSD:m1`), atau `all`/`semua`.
 - Maks 5 jadwal per chat, 20 total. Satu job gagal/timeout tidak mematikan loop; kegagalan
   dilaporkan ke chat dan job dinonaktifkan otomatis setelah 5 kali gagal.
 - Scheduler hidup di proses bot (`forex-bot`), jadi bot harus jalan agar jadwal berjalan.
