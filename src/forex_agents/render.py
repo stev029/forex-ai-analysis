@@ -8,6 +8,8 @@ from __future__ import annotations
 import html
 from typing import Any
 
+from .market_hours import STALE_AFTER_S
+
 # Label teknis dari LLM tetap Inggris di state; terjemahan hanya di lapisan tampilan.
 BIAS_ID = {"bullish": "bullish (naik)", "bearish": "bearish (turun)", "range": "range (sideways)"}
 STRENGTH_ID = {"weak": "lemah", "moderate": "sedang", "strong": "kuat"}
@@ -49,18 +51,39 @@ def _esc(text: Any) -> str:
     return html.escape(" ".join(str(text or "").split()))
 
 
+def _ago(lag: int) -> str:
+    if lag < 90:
+        return f"{lag} detik lalu"
+    if lag < 5400:
+        return f"{lag // 60} menit lalu"
+    if lag < 172800:
+        return f"{lag // 3600} jam lalu"
+    return f"{lag // 86400} hari lalu"
+
+
 def _stamp_line(final: dict) -> str:
-    """Baris waktu data harga + umur data, supaya jelas harga tidak basi."""
+    """Baris waktu data harga + umur data + status bursa.
+
+    Umur data besar saat pasar tutup itu normal, jadi jangan dilaporkan sebagai
+    harga basi. Peringatan hanya muncul kalau bursa buka tapi bar tertinggal.
+    """
     stamp = final.get("price_time") or ""
     lag = final.get("price_lag_s")
+    market = final.get("market") or {}
+    is_open = bool(market.get("is_open"))
+
     if not stamp:
         return "data harga: <i>tidak tersedia</i>"
     short = stamp.replace("+00:00", "Z").replace("T", " ")[:19]
-    if lag is None:
-        return f"data harga: <code>{_esc(short)}</code>"
-    if lag < 90:
-        return f"data harga: <code>{_esc(short)}</code> ({lag} detik lalu)"
-    return f"data harga: <code>{_esc(short)}</code> ({lag // 60} menit lalu)"
+    parts = [f"data harga: <code>{_esc(short)}</code>"]
+    if lag is not None:
+        parts.append(f"({_ago(int(lag))})")
+    if market:
+        parts.append("pasar buka" if is_open else "pasar tutup (weekend)")
+    line = " ".join(parts)
+    if lag is not None and is_open and int(lag) > STALE_AFTER_S:
+        line += f"\n⚠️ harga tertinggal {_ago(int(lag))} padahal pasar buka"
+    return line
 
 
 def split_message(text: str, limit: int = MAX_CHUNK) -> list[str]:

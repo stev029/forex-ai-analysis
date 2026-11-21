@@ -91,3 +91,38 @@ def test_structure_detects_uptrend():
         index=idx,
     )
     assert structure(df)["structure"] == "bullish"
+
+
+def test_stamp_line_says_market_closed_not_stale():
+    from forex_agents.render import _stamp_line
+
+    line = _stamp_line(
+        {
+            "price_time": "2026-11-20 21:59:00+00:00",
+            "price_lag_s": 67705,
+            "market": {"is_open": False, "reason": "weekend"},
+        }
+    )
+    assert "pasar tutup" in line
+    assert "tertinggal" not in line
+    assert "18 jam lalu" in line
+
+
+def test_stamp_line_warns_when_open_and_lagging():
+    from forex_agents.render import _stamp_line
+
+    line = _stamp_line(
+        {
+            "price_time": "2026-11-18 08:00:00+00:00",
+            "price_lag_s": 900,
+            "market": {"is_open": True, "reason": "bursa buka"},
+        }
+    )
+    assert "pasar buka" in line
+    assert "harga tertinggal 15 menit" in line
+
+
+def test_stamp_line_handles_missing_time():
+    from forex_agents.render import _stamp_line
+
+    assert "tidak tersedia" in _stamp_line({})

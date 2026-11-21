@@ -20,6 +20,7 @@ class AnalysisState(TypedDict, total=False):
     price_time: str
     price_lag_s: int | None
     quote: dict[str, Any]
+    market: dict[str, Any]
     pip: float
 
     # agent outputs (one per stage)

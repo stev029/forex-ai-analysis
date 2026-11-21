@@ -10,6 +10,7 @@ from .config import get_settings
 from .indicators import snapshot
 from .llm import structured
 from .market import get_provider, last_price, pip_size
+from .market_hours import STALE_AFTER_S, market_state
 from .schemas import CriticalOut, DecisionOut, TrendOut, ValidationOut
 from .state import AnalysisState
 from .timeframes import PIP, cascade
@@ -115,6 +116,7 @@ async def fetch_node(state: AnalysisState) -> dict:
             "price_time": "",
             "price_lag_s": None,
             "quote": {},
+            "market": market_state().as_dict(),
             "pip": pip,
             "errors": errors,
             "trace": trace + ["fetch: semua provider gagal"],
@@ -156,6 +158,7 @@ async def fetch_node(state: AnalysisState) -> dict:
         "price_time": price_time,
         "price_lag_s": quote.get("lag_s"),
         "quote": quote,
+        "market": market_state().as_dict(),
         "pip": pip,
         "errors": errors,
         "trace": trace,
@@ -271,6 +274,20 @@ async def decision_node(state: AnalysisState) -> dict:
             vetoes.append("SL/TP berada di sisi yang salah dari entry")
     elif out.action in ("BUY", "SELL"):
         vetoes.append("rencana trade tidak lengkap (entry/SL/TP kosong)")
+
+    # Harga basi saat bursa buka = rencana trade tidak bisa dipercaya.
+    lag = state.get("price_lag_s")
+    market = state.get("market") or {}
+    if (
+        out.action in ("BUY", "SELL")
+        and lag is not None
+        and market.get("is_open")
+        and int(lag) > STALE_AFTER_S
+    ):
+        vetoes.append(
+            f"harga tertinggal {int(lag) // 60} menit padahal pasar buka "
+            f"(batas {STALE_AFTER_S // 60} menit)"
+        )
 
     if vetoes and out.action != "NO_TRADE":
         out.action = "NO_TRADE"
