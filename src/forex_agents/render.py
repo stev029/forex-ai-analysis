@@ -150,6 +150,18 @@ def render(final: dict) -> str:
     for vt in d.get("vetoes") or []:
         lines.append(f"   − {_esc(vt)}")
 
+    mem = final.get("memory") or {}
+    if mem.get("count"):
+        tally_ = mem.get("tally") or {}
+        lines += [
+            "",
+            f"<b>5) Ingatan</b> ({mem['count']} analisis terakhir)",
+            f"   hasil: tp {tally_.get('tp', 0)} | sl {tally_.get('sl', 0)} | "
+            f"terbuka {tally_.get('terbuka', 0)} | netral {tally_.get('netral', 0)}",
+            f"   aksi berulang: {_esc(mem.get('streak_action'))} x{mem.get('streak_count')}",
+        ]
+        lines += [f"   • {_esc(c)}" for c in (mem.get("calls") or [])[:3]]
+
     if final.get("errors"):
         lines += ["", "<i>kesalahan:</i>"] + [f"   {_esc(e)}" for e in final["errors"]]
 

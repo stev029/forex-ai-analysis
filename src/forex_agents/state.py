@@ -22,6 +22,7 @@ class AnalysisState(TypedDict, total=False):
     quote: dict[str, Any]
     market: dict[str, Any]
     pip: float
+    memory: dict[str, Any]
 
     # agent outputs (one per stage)
     trend: dict[str, Any]

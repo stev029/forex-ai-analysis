@@ -114,3 +114,46 @@ async def test_schedule_help_mentions_pause_and_resume(sched):
     await botmod.cmd_schedule(upd, _ctx("bantuan-tidak-dikenal"))
     text = upd.effective_message.replies[-1]
     assert "pause" in text and "resume" in text
+
+
+@pytest.mark.asyncio
+async def test_memory_command_shows_history(sched, monkeypatch):
+    mem = {
+        "count": 2,
+        "text": "2 analisis terakhir, aksi berulang: NO_TRADE x2\nhasil: tp 0",
+        "streak_action": "NO_TRADE",
+        "streak_count": 2,
+        "calls": ["2026-11-20 10:00 NO_TRADE conf 70 -> netral"],
+    }
+
+    async def fake_load(symbol, base, limit=10):
+        return mem
+
+    monkeypatch.setattr(botmod, "load_memory", fake_load)
+    upd = _update(1)
+    await botmod.cmd_memory(upd, _ctx("xauusd", "m1"))
+    text = upd.effective_message.replies[-1]
+    assert "Ingatan XAUUSD m1" in text
+    assert "NO_TRADE x2" in text
+
+
+@pytest.mark.asyncio
+async def test_memory_command_empty(sched, monkeypatch):
+    async def fake_load(symbol, base, limit=10):
+        return {"count": 0, "text": ""}
+
+    monkeypatch.setattr(botmod, "load_memory", fake_load)
+    upd = _update(1)
+    await botmod.cmd_memory(upd, _ctx("eurusd", "m1"))
+    assert "belum ada ingatan" in upd.effective_message.replies[-1]
+
+
+@pytest.mark.asyncio
+async def test_memory_command_reports_db_error(sched, monkeypatch):
+    async def fake_load(symbol, base, limit=10):
+        return {"count": 0, "text": "", "error": "memori tidak terbaca: db mati"}
+
+    monkeypatch.setattr(botmod, "load_memory", fake_load)
+    upd = _update(1)
+    await botmod.cmd_memory(upd, _ctx())
+    assert "memori tidak terbaca" in upd.effective_message.replies[-1]

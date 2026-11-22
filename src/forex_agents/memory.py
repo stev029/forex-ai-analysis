@@ -138,6 +138,9 @@ async def save_analysis(conn, *, request_id: str, chat_id: int | None, state: di
     import json
 
     decision = state.get("decision") or {}
+    # Jangan simpan blok ingatan ke payload: baris cukup menyimpan hasil analisis,
+    # ingatan dibangun ulang dari baris-baris sebelumnya.
+    payload = {k: v for k, v in state.items() if k != "memory"}
     async with conn.cursor() as cur:
         await cur.execute(
             """
@@ -157,7 +160,7 @@ async def save_analysis(conn, *, request_id: str, chat_id: int | None, state: di
                 decision.get("action"),
                 decision.get("confidence"),
                 state.get("price"),
-                json.dumps(state, default=str),
+                json.dumps(payload, default=str),
             ),
         )
 
@@ -180,6 +183,40 @@ async def recent_analyses(conn, limit: int = 5) -> list[dict]:
 
 
 # ------------------------------------------------------------------ schedules
+async def history_for(
+    conn, symbol: str, base_tf: str, limit: int = 5
+) -> list[dict]:
+    """Riwayat keputusan terakhir untuk satu simbol + TF dasar."""
+    if conn is None:
+        return []
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            SELECT created_at, coalesce(action, payload->'decision'->>'action', '?'),
+                   confidence, price, payload
+              FROM analyses
+             WHERE symbol = %s
+               AND coalesce(base_tf, payload->>'base_tf', '?') = %s
+             ORDER BY created_at DESC
+             LIMIT %s
+            """,
+            (symbol.strip().upper(), base_tf, limit),
+        )
+        rows = await cur.fetchall()
+    out: list[dict] = []
+    for created_at, action, confidence, price, payload in rows:
+        out.append(
+            {
+                "created_at": created_at.isoformat() if created_at else "",
+                "action": action,
+                "confidence": confidence,
+                "price": price,
+                "payload": payload if isinstance(payload, dict) else {},
+            }
+        )
+    return out
+
+
 async def save_schedule(conn, job) -> None:
     """Upsert satu jadwal; aman dipanggil walau DATABASE_URL kosong."""
     if conn is None:

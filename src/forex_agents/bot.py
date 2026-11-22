@@ -20,8 +20,8 @@ from .memory import (
     save_schedule,
     touch_schedule,
 )
-from .render import render, split_message
-from .runner import run_analysis
+from .render import _esc, render, split_message
+from .runner import load_memory, run_analysis
 from .scheduler import (
     MAX_JOBS_PER_CHAT,
     Scheduler,
@@ -50,6 +50,8 @@ HELP = (
     "/tf m1 — lihat pemetaan timeframe dari TF dasar\n"
     "/symbols — daftar simbol/alias yang didukung\n"
     "/history — 5 analisis terakhir\n"
+    "/memory [SIMBOL] [TF] — ingatan jangka panjang simbol+TF\n"
+    "   contoh: <code>/memory XAUUSD m1</code>\n"
     "/help — pesan ini\n\n"
     "Tahapan: tren (base+2) → validasi (base+1) → area kritis (base) → keputusan.\n"
     "Interval jadwal mengikuti TF target terbesar: m1 → 15m, m5 → 30m, m15 → 1h, "
@@ -177,6 +179,38 @@ async def cmd_history(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
         f"{r['at'][:19]}  {r['symbol']} {r['tf']}  {r['action']} {r['confidence']}" for r in rows
     )
     await update.effective_message.reply_text(f"<pre>{body}</pre>", parse_mode=ParseMode.HTML)
+
+
+async def cmd_memory(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    """Tampilkan ingatan jangka panjang untuk satu simbol + TF."""
+    if not await _guard(update):
+        return
+    s = get_settings()
+    args = list(ctx.args or [])
+    symbol = args[0] if args else s.default_symbol
+    tf_raw = args[1] if len(args) > 1 else s.default_timeframe
+    try:
+        base = normalize_tf(tf_raw)
+    except ValueError as exc:
+        await update.effective_message.reply_text(str(exc))
+        return
+    mem = await load_memory(symbol.strip().upper(), base, limit=10)
+    if mem.get("error"):
+        await update.effective_message.reply_text(mem["error"])
+        return
+    if not mem.get("count"):
+        await update.effective_message.reply_text(
+            f"belum ada ingatan untuk {symbol.upper()} {base}"
+        )
+        return
+    body = "\n".join(mem.get("calls") or [])
+    await update.effective_message.reply_text(
+        f"<b>Ingatan {_esc(symbol.upper())} {_esc(base)}</b>\n"
+        f"{_esc(mem['text'].splitlines()[1])}\n"
+        f"aksi berulang: {_esc(mem['streak_action'])} x{mem['streak_count']}\n"
+        f"<pre>{body}</pre>",
+        parse_mode=ParseMode.HTML,
+    )
 
 
 async def on_error(update: object, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -400,6 +434,7 @@ async def _post_init(app: Application) -> None:
             BotCommand("analyze", "cascade manual: /analyze EURUSD m1"),
             BotCommand("schedule", "jadwal otomatis: /schedule add XAUUSD m1 15m"),
             BotCommand("history", "5 analisis terakhir"),
+            BotCommand("memory", "ingatan jangka panjang: /memory XAUUSD m1"),
             BotCommand("tf", "pemetaan timeframe"),
             BotCommand("symbols", "simbol & alias"),
             BotCommand("help", "bantuan"),
@@ -435,6 +470,7 @@ def main() -> None:
     app.add_handler(CommandHandler(["schedule", "jadwal", "cron"], cmd_schedule))
     app.add_handler(CommandHandler("symbols", cmd_symbols))
     app.add_handler(CommandHandler("history", cmd_history))
+    app.add_handler(CommandHandler(["memory", "ingatan", "memori"], cmd_memory))
     app.add_error_handler(on_error)
     log.info("bot polling")
     app.run_polling(allowed_updates=Update.ALL_TYPES)

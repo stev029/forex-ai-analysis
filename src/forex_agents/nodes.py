@@ -60,6 +60,15 @@ def _fmt(obj: Any) -> str:
     return json.dumps(obj, indent=2, default=str)
 
 
+def _mem(state: AnalysisState) -> str:
+    """Blok riwayat keputusan untuk disuntik ke prompt."""
+    mem = state.get("memory") or {}
+    text = str(mem.get("text") or "").strip()
+    if not text:
+        return ""
+    return f"\nRiwayat keputusan sebelumnya (ingatan):\n{text}\n"
+
+
 async def _fetch_df(provider: Any, symbol: str, tf: str, bars: int):
     """Ambil bar tanpa memblokir event loop.
 
@@ -172,7 +181,7 @@ async def trend_node(state: AnalysisState) -> dict:
                           "rationale": "tidak ada data"}, "errors": [f"tren {state['trend_tf']}: tidak ada data"]}
     prompt = (
         f"{_TREND_SYS}{_LANG}\n\nSymbol: {state['symbol']}\nTimeframe: {state['trend_tf']}\n"
-        f"Snapshot:\n{_fmt(snap)}"
+        f"Snapshot:\n{_fmt(snap)}{_mem(state)}"
     )
     try:
         out: TrendOut = await structured(prompt, TrendOut)
@@ -192,7 +201,7 @@ async def validation_node(state: AnalysisState) -> dict:
     prompt = (
         f"{_VALID_SYS}{_LANG}\n\nSymbol: {state['symbol']}\nTimeframe: {state['validation_tf']}\n"
         f"Trend verdict ({state['trend_tf']}):\n{_fmt(state.get('trend', {}))}\n"
-        f"Snapshot:\n{_fmt(snap)}"
+        f"Snapshot:\n{_fmt(snap)}{_mem(state)}"
     )
     try:
         out: ValidationOut = await structured(prompt, ValidationOut)
@@ -215,7 +224,7 @@ async def critical_node(state: AnalysisState) -> dict:
         f"{_CRIT_SYS}{_LANG}\n\nSymbol: {state['symbol']}\nTimeframe: {state['critical_tf']}\n"
         f"Trend: {state.get('trend', {}).get('bias')}\n"
         f"Validation: {state.get('validation', {}).get('phase')}\n"
-        f"Snapshot:\n{_fmt(snap)}"
+        f"Snapshot:\n{_fmt(snap)}{_mem(state)}"
     )
     try:
         out: CriticalOut = await structured(prompt, CriticalOut)
@@ -246,7 +255,7 @@ async def decision_node(state: AnalysisState) -> dict:
         f"min_rr = {s.min_rr}\nmax_spread_pips = {s.max_spread_pips}\n"
         f"Trend:\n{_fmt(state.get('trend', {}))}\n"
         f"Validation:\n{_fmt(state.get('validation', {}))}\n"
-        f"Critical:\n{_fmt(state.get('critical', {}))}"
+        f"Critical:\n{_fmt(state.get('critical', {}))}{_mem(state)}"
     )
     try:
         out: DecisionOut = await structured(prompt, DecisionOut)

@@ -37,10 +37,11 @@ src/forex_agents/
   nodes.py       fetch / trend / validation / critical / decision
   graph.py       StateGraph wiring + data gate
   memory.py      AsyncPostgresSaver checkpoints + analyses table
+  recall.py      memori jangka panjang: riwayat keputusan + penilaian hasil
   runner.py      run_analysis() entrypoint
   scheduler.py   jadwal otomatis per bar tutup TF target
   render.py      Telegram HTML renderer
-  bot.py         /analyze /schedule /tf /history /help
+  bot.py         /analyze /schedule /tf /history /memory /help
   cli.py         one-shot CLI
 run.sh           Termux/proot launcher
 run-server.sh    Ubuntu server launcher (venv + systemd)
@@ -130,6 +131,7 @@ Telegram:
 /analyze EURUSD m1
 /tf m1
 /history
+/memory XAUUSD m1
 /schedule add XAUUSD m1          # otomatis tiap 15 menit
 /schedule add EURUSD m1 30m      # interval custom
 /schedule list
@@ -280,6 +282,24 @@ error → `TVUnavailable`, fetch di dalam event loop aktif). No network or LLM c
 `ADD COLUMN IF NOT EXISTS` for `request_id/base_tf/trend_tf/validation_tf/critical_tf/action/confidence/price/payload`,
 drops `NOT NULL` from the legacy `decision` column, and widens legacy `numeric(5,4)` price columns
 to `DOUBLE PRECISION` (they overflow for gold/indices/crypto).
+
+## Memori jangka panjang
+
+Checkpointer LangGraph hanya menyimpan satu thread (satu request), jadi tidak punya ingatan antar
+analisis. `recall.py` + tabel `analyses` memberi ingatan:
+
+- `history_for(conn, symbol, base_tf, limit)` mengambil N keputusan terakhir untuk simbol + TF dasar
+  yang sama (bukan TF target), urut terbaru dulu.
+- `recall.evaluate(action, entry, stop_loss, take_profit, price_now)` menilai hasil lama terhadap
+  harga sekarang: `tp`, `sl`, `terbuka`, atau `netral` (NO_TRADE). Ini cek level, bukan backtest.
+- `recall.summarize()` menghasilkan teks "N analisis terakhir, aksi berulang: X xN / hasil: tp a, sl b,
+  terbuka c, netral d" + daftar baris `waktu AKSI conf plan -> hasil`.
+- `runner.load_memory()` menyuntik blok itu ke `state["memory"]`; `nodes._mem()` menambahkannya ke
+  prompt tren, validasi, area kritis, dan keputusan. Kegagalan DB tidak pernah menggagalkan analisis
+  (hanya `error` di blok memori).
+- Blok memori sengaja TIDAK disimpan ke `payload` (`save_analysis` membuang key `memory`) supaya baris
+  tetap kecil dan ingatan dibangun ulang dari baris sebelumnya.
+- Output menampilkan seksi `<b>5) Ingatan</b>`; `/memory [SIMBOL] [TF]` menampilkan 10 baris terakhir.
 
 ## Notes / limits
 
