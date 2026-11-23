@@ -249,3 +249,13 @@ def test_read_falls_back_to_confirm_when_area_missing():
 def test_read_raises_without_area_data():
     with pytest.raises(ValueError):
         scalp.read(1.1, None, None, None, pip=0.0001)
+
+
+# ------------------------------------------------- migrasi tabel chat_settings
+def test_schema_migrates_legacy_chat_settings():
+    """Tabel chat_settings lama (balance/risk/timeframe) harus dapat kolom mode."""
+    from forex_agents.memory import SCHEMA_SQL
+
+    assert "ALTER TABLE chat_settings ADD COLUMN IF NOT EXISTS mode" in SCHEMA_SQL
+    assert "UPDATE chat_settings SET mode = 'cascade' WHERE mode IS NULL" in SCHEMA_SQL
+    assert "ALTER COLUMN mode SET DEFAULT 'cascade'" in SCHEMA_SQL

@@ -98,6 +98,11 @@ CREATE TABLE IF NOT EXISTS chat_settings (
     mode        TEXT NOT NULL DEFAULT 'cascade',
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- tabel chat_settings sudah ada dari versi lama (balance/risk/symbol/timeframe/...),
+-- jadi kolom mode harus ditambahkan idempoten.
+ALTER TABLE chat_settings ADD COLUMN IF NOT EXISTS mode TEXT;
+UPDATE chat_settings SET mode = 'cascade' WHERE mode IS NULL;
+ALTER TABLE chat_settings ALTER COLUMN mode SET DEFAULT 'cascade';
 """
 
 
@@ -291,7 +296,7 @@ async def get_chat_mode(conn, chat_id: int) -> str | None:
     async with conn.cursor() as cur:
         await cur.execute("SELECT mode FROM chat_settings WHERE chat_id = %s", (chat_id,))
         row = await cur.fetchone()
-    return str(row[0]) if row else None
+    return str(row[0]) if row and row[0] else None
 
 
 async def set_chat_mode(conn, chat_id: int, mode: str) -> None:
