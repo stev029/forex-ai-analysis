@@ -91,6 +91,13 @@ CREATE TABLE IF NOT EXISTS schedules (
     last_run      TIMESTAMPTZ
 );
 CREATE INDEX IF NOT EXISTS schedules_chat_idx ON schedules (chat_id);
+
+-- preferensi per chat (mode cascade/scalp)
+CREATE TABLE IF NOT EXISTS chat_settings (
+    chat_id     BIGINT PRIMARY KEY,
+    mode        TEXT NOT NULL DEFAULT 'cascade',
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 """
 
 
@@ -274,3 +281,29 @@ async def list_schedules(conn) -> list[dict]:
         }
         for r in rows
     ]
+
+
+# ------------------------------------------------------------- chat settings
+async def get_chat_mode(conn, chat_id: int) -> str | None:
+    """Mode tersimpan untuk satu chat, None bila belum pernah di-set."""
+    if conn is None:
+        return None
+    async with conn.cursor() as cur:
+        await cur.execute("SELECT mode FROM chat_settings WHERE chat_id = %s", (chat_id,))
+        row = await cur.fetchone()
+    return str(row[0]) if row else None
+
+
+async def set_chat_mode(conn, chat_id: int, mode: str) -> None:
+    if conn is None:
+        return
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            INSERT INTO chat_settings (chat_id, mode, updated_at)
+            VALUES (%s, %s, now())
+            ON CONFLICT (chat_id)
+            DO UPDATE SET mode = EXCLUDED.mode, updated_at = now()
+            """,
+            (chat_id, mode),
+        )

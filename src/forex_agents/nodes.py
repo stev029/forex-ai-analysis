@@ -11,6 +11,7 @@ from .indicators import snapshot
 from .llm import structured
 from .market import get_provider, last_price, pip_size
 from .market_hours import STALE_AFTER_S, market_state
+from .scalp import all_tfs, read as scalp_read
 from .schemas import CriticalOut, DecisionOut, TrendOut, ValidationOut
 from .state import AnalysisState
 from .timeframes import PIP, cascade
@@ -95,6 +96,7 @@ async def fetch_node(state: AnalysisState) -> dict:
     tf_map = cascade(state["base_tf"])
     pip = pip_size(state["symbol"])
     snaps: dict[str, dict] = {}
+    frames: dict[str, Any] = {}
     errors: list[str] = []
     trace: list[str] = []
 
@@ -135,11 +137,25 @@ async def fetch_node(state: AnalysisState) -> dict:
         tf = tf_map[role]
         try:
             df = await _fetch_df(provider, state["symbol"], tf, 300)
+            frames[tf] = df
             snaps[tf] = snapshot(df, tf, pip=pip)
             trace.append(f"fetched {state['symbol']} {tf} ({len(df)} bars)")
         except Exception as exc:  # noqa: BLE001
             errors.append(f"fetch {tf}: {exc}")
             log.exception("fetch failed for %s %s", state["symbol"], tf)
+
+    if state.get("mode") == "scalp":
+        for tf in all_tfs():
+            if tf in snaps:
+                continue
+            try:
+                df = await _fetch_df(provider, state["symbol"], tf, 300)
+                frames[tf] = df
+                snaps[tf] = snapshot(df, tf, pip=pip)
+                trace.append(f"fetched {state['symbol']} {tf} ({len(df)} bars)")
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"fetch {tf}: {exc}")
+                log.warning("fetch scalping gagal %s %s: %s", state["symbol"], tf, exc)
 
     # Harga acuan = quote tick terbaru, bukan close bar terakhir (bisa tertinggal 1-10 menit).
     quote: dict = {}
@@ -158,6 +174,20 @@ async def fetch_node(state: AnalysisState) -> dict:
         or snaps.get(tf_map["critical"], {}).get("last_bar_time")
         or ""
     )
+    scalp_block: dict = {}
+    if state.get("mode") == "scalp":
+        try:
+            scalp_block = scalp_read(
+                price,
+                frames.get("m15"),
+                frames.get("m30"),
+                frames.get("m1"),
+                pip,
+            ).as_dict()
+            trace.append(f"scalp: area_ideal={scalp_block['ideal']['ok']}")
+        except Exception as exc:  # noqa: BLE001 - scalping tidak boleh mematikan cascade
+            errors.append(f"scalp: {exc}")
+            log.exception("scalp read failed for %s", state["symbol"])
     return {
         "trend_tf": tf_map["trend"],
         "validation_tf": tf_map["validation"],
@@ -169,6 +199,7 @@ async def fetch_node(state: AnalysisState) -> dict:
         "quote": quote,
         "market": market_state().as_dict(),
         "pip": pip,
+        "scalp": scalp_block,
         "errors": errors,
         "trace": trace,
     }
@@ -248,6 +279,16 @@ async def decision_node(state: AnalysisState) -> dict:
         }
     snap = state["snapshots"].get(state["critical_tf"], {})
     atr_pips = snap.get("atr_pips", 0.0)
+    scalp = state.get("scalp") or {}
+    scalp_block = ""
+    if state.get("mode") == "scalp" and scalp:
+        scalp_block = (
+            "\nMODE SCALPING. Konteks h1/h4/d1/w1 hanya latar, BUKAN acuan utama.\n"
+            "Acuan utama = area potensial m15/m30. Entry hanya di m1/m5.\n"
+            f"Data scalping (deterministik):\n{_fmt(scalp)}\n"
+            "Aturan: entry hanya bila area ideal terbentuk (harga di area, area teruji, "
+            "wick penolakan searah, kelelahan dorongan). Jika tidak, action wajib NO_TRADE.\n"
+        )
     prompt = (
         f"{_DECISION_SYS}{_LANG}\n\nSymbol: {state['symbol']}\n"
         f"Execution TF: {state['critical_tf']}\nPrice: {state.get('price')}\n"
@@ -255,7 +296,7 @@ async def decision_node(state: AnalysisState) -> dict:
         f"min_rr = {s.min_rr}\nmax_spread_pips = {s.max_spread_pips}\n"
         f"Trend:\n{_fmt(state.get('trend', {}))}\n"
         f"Validation:\n{_fmt(state.get('validation', {}))}\n"
-        f"Critical:\n{_fmt(state.get('critical', {}))}{_mem(state)}"
+        f"Critical:\n{_fmt(state.get('critical', {}))}{scalp_block}{_mem(state)}"
     )
     try:
         out: DecisionOut = await structured(prompt, DecisionOut)
@@ -297,6 +338,19 @@ async def decision_node(state: AnalysisState) -> dict:
             f"harga tertinggal {int(lag) // 60} menit padahal pasar buka "
             f"(batas {STALE_AFTER_S // 60} menit)"
         )
+
+    # Mode scalping: area ideal adalah gerbang keras, bukan saran.
+    if state.get("mode") == "scalp" and out.action in ("BUY", "SELL"):
+        ideal = (scalp.get("ideal") or {})
+        if not ideal.get("ok"):
+            missing = ", ".join(ideal.get("missing") or []) or "area ideal belum terbentuk"
+            vetoes.append(f"scalping: area ideal belum terbentuk ({missing})")
+        elif scalp.get("plan", {}).get("side") in ("buy", "sell"):
+            side = scalp["plan"]["side"]
+            if (side == "buy") != (out.action == "BUY"):
+                vetoes.append(
+                    f"scalping: area menuntut {side.upper()} tapi agen memilih {out.action}"
+                )
 
     if vetoes and out.action != "NO_TRADE":
         out.action = "NO_TRADE"

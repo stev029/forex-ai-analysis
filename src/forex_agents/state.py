@@ -23,6 +23,8 @@ class AnalysisState(TypedDict, total=False):
     market: dict[str, Any]
     pip: float
     memory: dict[str, Any]
+    mode: str
+    scalp: dict[str, Any]
 
     # agent outputs (one per stage)
     trend: dict[str, Any]

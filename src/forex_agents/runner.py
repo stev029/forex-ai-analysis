@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import uuid
 
+from .config import get_settings
 from .graph import build_graph
 from .memory import checkpointer_cm, db_cm, history_for
+from .modes import normalize_mode
 from .recall import HISTORY_LIMIT, build_state, parse_rows
 from .state import AnalysisState
 from .timeframes import cascade, normalize_tf
@@ -22,15 +24,18 @@ async def load_memory(symbol: str, base_tf: str, price: float | None = None,
 
 
 async def run_analysis(symbol: str, base_tf: str, *, chat_id: int | None = None,
-                       request_id: str | None = None) -> tuple[dict, str]:
+                       request_id: str | None = None,
+                       mode: str | None = None) -> tuple[dict, str]:
     base = normalize_tf(base_tf)
     rid = request_id or uuid.uuid4().hex
     tf_map = cascade(base)
     sym = symbol.strip().upper()
+    active_mode = normalize_mode(mode or get_settings().default_mode)
     memory = await load_memory(sym, base)
 
     init: AnalysisState = {
         "symbol": sym,
+        "mode": active_mode,
         "base_tf": base,
         "trend_tf": tf_map["trend"],
         "validation_tf": tf_map["validation"],

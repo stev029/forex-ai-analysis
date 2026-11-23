@@ -23,8 +23,10 @@ def rsi(series: pd.Series, length: int = 14) -> pd.Series:
     delta = series.diff()
     gain = delta.clip(lower=0).ewm(alpha=1 / length, adjust=False).mean()
     loss = (-delta.clip(upper=0)).ewm(alpha=1 / length, adjust=False).mean()
+    # loss == 0 berarti tidak ada penurunan sama sekali -> RSI 100, bukan NaN.
     rs = gain / loss.where(loss > 0)
     out = 100 - 100 / (1 + rs)
+    out = out.where(loss > 0, 100.0)
     return out.fillna(50.0).astype("float64")
 
 

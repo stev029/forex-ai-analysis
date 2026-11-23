@@ -14,12 +14,15 @@ from .config import get_settings
 from .memory import (
     db_cm,
     delete_schedule,
+    get_chat_mode,
     list_schedules,
     recent_analyses,
     save_analysis,
     save_schedule,
+    set_chat_mode,
     touch_schedule,
 )
+from .modes import MODES, describe, normalize_mode
 from .render import _esc, render, split_message
 from .runner import load_memory, run_analysis
 from .scheduler import (
@@ -48,6 +51,7 @@ HELP = (
     "/schedule del &lt;ID|all&gt; — hapus jadwal\n"
     "/schedule run &lt;ID&gt; — jalankan sekarang\n"
     "/tf m1 — lihat pemetaan timeframe dari TF dasar\n"
+    "/mode [scalp|cascade] — ganti teknik analisis kapan pun\n"
     "/symbols — daftar simbol/alias yang didukung\n"
     "/history — 5 analisis terakhir\n"
     "/memory [SIMBOL] [TF] — ingatan jangka panjang simbol+TF\n"
@@ -104,6 +108,55 @@ async def cmd_tf(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 
+async def _chat_mode(chat_id: int | None) -> str | None:
+    """Mode tersimpan untuk chat; None berarti pakai default dari .env."""
+    if chat_id is None:
+        return None
+    try:
+        async with db_cm() as conn:
+            return await get_chat_mode(conn, chat_id)
+    except Exception:  # noqa: BLE001 - mode tidak boleh menggagalkan analisis
+        log.warning("gagal membaca mode chat %s", chat_id, exc_info=True)
+        return None
+
+
+async def cmd_mode(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    """Switch teknik analisis: /mode scalp | /mode cascade | /mode (lihat)."""
+    if not await _guard(update):
+        return
+    msg = update.effective_message
+    chat = update.effective_chat
+    args = list(ctx.args or [])
+
+    if not args:
+        current = await _chat_mode(chat.id) or normalize_mode(get_settings().default_mode)
+        await msg.reply_text(
+            f"mode aktif: <b>{current}</b>\n{describe(current)}\n\n"
+            "ganti: <code>/mode scalp</code> atau <code>/mode cascade</code>",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    try:
+        mode = normalize_mode(args[0])
+    except ValueError as exc:
+        await msg.reply_text(f"{exc}\npilihan: {', '.join(MODES)}")
+        return
+
+    try:
+        async with db_cm() as conn:
+            await set_chat_mode(conn, chat.id, mode)
+    except Exception as exc:  # noqa: BLE001
+        log.exception("set_chat_mode failed")
+        await msg.reply_text(f"gagal menyimpan mode: {exc}")
+        return
+
+    await msg.reply_text(
+        f"mode diganti ke <b>{mode}</b>\n{describe(mode)}",
+        parse_mode=ParseMode.HTML,
+    )
+
+
 async def cmd_analyze(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     if not await _guard(update):
         return
@@ -123,9 +176,10 @@ async def cmd_analyze(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     await chat.send_action(ChatAction.TYPING)
     await msg.reply_text(f"menjalankan cascade {symbol.upper()} {tf} …")
 
+    mode = await _chat_mode(chat.id)
     try:
         final, rid = await asyncio.wait_for(
-            run_analysis(symbol, tf, chat_id=chat.id), timeout=240
+            run_analysis(symbol, tf, chat_id=chat.id, mode=mode), timeout=240
         )
     except asyncio.TimeoutError:
         await msg.reply_text("analisis melebihi batas waktu (240 detik)")
@@ -256,7 +310,14 @@ async def _telegram_deliver(chat_id: int, text: str) -> None:
 
 async def _scheduled_run(symbol: str, base_tf: str, *, chat_id: int | None = None):
     """run_analysis + simpan ke tabel analyses, dipakai scheduler."""
-    final, rid = await run_analysis(symbol, base_tf, chat_id=chat_id)
+    mode = None
+    if chat_id is not None:
+        try:
+            async with db_cm() as conn:
+                mode = await get_chat_mode(conn, chat_id)
+        except Exception:  # noqa: BLE001 - mode DB opsional
+            log.warning("gagal membaca mode chat %s", chat_id, exc_info=True)
+    final, rid = await run_analysis(symbol, base_tf, chat_id=chat_id, mode=mode)
     try:
         async with db_cm() as conn:
             await save_analysis(conn, request_id=rid, chat_id=chat_id, state=final)
@@ -432,6 +493,7 @@ async def _post_init(app: Application) -> None:
     await app.bot.set_my_commands(
         [
             BotCommand("analyze", "cascade manual: /analyze EURUSD m1"),
+            BotCommand("mode", "ganti teknik: /mode scalp atau /mode cascade"),
             BotCommand("schedule", "jadwal otomatis: /schedule add XAUUSD m1 15m"),
             BotCommand("history", "5 analisis terakhir"),
             BotCommand("memory", "ingatan jangka panjang: /memory XAUUSD m1"),
@@ -466,6 +528,7 @@ def main() -> None:
     )
     app.add_handler(CommandHandler(["start", "help"], cmd_start))
     app.add_handler(CommandHandler("tf", cmd_tf))
+    app.add_handler(CommandHandler(["mode", "teknik"], cmd_mode))
     app.add_handler(CommandHandler("analyze", cmd_analyze))
     app.add_handler(CommandHandler(["schedule", "jadwal", "cron"], cmd_schedule))
     app.add_handler(CommandHandler("symbols", cmd_symbols))

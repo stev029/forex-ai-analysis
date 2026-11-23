@@ -16,9 +16,10 @@ async def _main() -> None:
     ap.add_argument("symbol", nargs="?", default="EURUSD")
     ap.add_argument("timeframe", nargs="?", default="m1")
     ap.add_argument("--json", action="store_true", help="dump raw final state")
+    ap.add_argument("--mode", default=None, help="cascade | scalp")
     args = ap.parse_args()
 
-    final, rid = await run_analysis(args.symbol, args.timeframe)
+    final, rid = await run_analysis(args.symbol, args.timeframe, mode=args.mode)
     try:
         async with db_cm() as conn:
             await save_analysis(conn, request_id=rid, chat_id=None, state=final)

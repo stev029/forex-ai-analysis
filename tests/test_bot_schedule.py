@@ -157,3 +157,58 @@ async def test_memory_command_reports_db_error(sched, monkeypatch):
     upd = _update(1)
     await botmod.cmd_memory(upd, _ctx())
     assert "memori tidak terbaca" in upd.effective_message.replies[-1]
+
+
+# ------------------------------------------------------------- /mode handler
+@pytest.mark.asyncio
+async def test_mode_shows_default_when_unset(monkeypatch):
+    async def _allow(_update):
+        return True
+
+    async def _none(_chat_id):
+        return None
+
+    monkeypatch.setattr(botmod, "_guard", _allow)
+    monkeypatch.setattr(botmod, "_chat_mode", _none)
+    upd = _update()
+    await botmod.cmd_mode(upd, _ctx())
+    text = upd.effective_message.replies[0]
+    assert "mode aktif" in text
+    assert "cascade" in text
+
+
+@pytest.mark.asyncio
+async def test_mode_switch_persists(monkeypatch):
+    saved: list[tuple[int, str]] = []
+
+    async def _allow(_update):
+        return True
+
+    async def _set(conn, chat_id, mode):
+        saved.append((chat_id, mode))
+
+    class _CM:
+        async def __aenter__(self):
+            return object()
+
+        async def __aexit__(self, *_exc):
+            return False
+
+    monkeypatch.setattr(botmod, "_guard", _allow)
+    monkeypatch.setattr(botmod, "db_cm", lambda: _CM())
+    monkeypatch.setattr(botmod, "set_chat_mode", _set)
+    upd = _update(7)
+    await botmod.cmd_mode(upd, _ctx("scalping"))
+    assert saved == [(7, "scalp")]
+    assert "mode diganti ke <b>scalp</b>" in upd.effective_message.replies[0]
+
+
+@pytest.mark.asyncio
+async def test_mode_rejects_unknown(monkeypatch):
+    async def _allow(_update):
+        return True
+
+    monkeypatch.setattr(botmod, "_guard", _allow)
+    upd = _update()
+    await botmod.cmd_mode(upd, _ctx("swing"))
+    assert "mode tidak dikenal" in upd.effective_message.replies[0]

@@ -22,6 +22,48 @@ numeric snapshot — it never sees raw candles and cannot invent prices. The dec
 applies hard guardrails (RR >= `MIN_RR`, stop <= 3x ATR, SL/TP on the correct side of entry);
 any veto downgrades the call to `NO_TRADE`.
 
+## Mode scalping (bisa di-switch kapan pun)
+
+Dua teknik, dipilih per chat lewat `/mode` atau per panggilan lewat `--mode`:
+
+| mode | konteks | acuan area | entry |
+|---|---|---|---|
+| `cascade` (default) | base+2 / base+1 | TF dasar | TF dasar |
+| `scalp` | `h1 h4 d1 w1` (latar saja) | `m15` + `m30` | `m1` + `m5` |
+
+`scalp.py` menghitung semuanya deterministik (tanpa LLM) supaya level tidak dikarang:
+
+- `potential_area(df_area, df_confirm, price)` — swing `m15`/`m30` di-cluster dengan toleransi
+  `0.75 x ATR`, menghasilkan `support`/`resistance`/`active`, `touches`, dan `inside`.
+- `wick_rejection(df, bars=3)` — wick >= `1.5x` body dengan close position di sisi berlawanan.
+- `push(df, lookback=10)` — arah dorongan terakhir, `net`, `consecutive`, `decay` (hist MACD mengecil).
+- `exhaustion(df)` — skor 0-3: RSI ekstrem, hist mengecil, >= 4 candle searah.
+- `ideal_area(...)` — gerbang keras, semua harus benar: `harga_di_area`, `area_teruji` (>= 2 sentuhan),
+  `wick_penolakan`, `wick_searah_area`, `kelelahan` (skor >= 2).
+- `plan(...)` — entry di harga sekarang, SL di balik wick + `0.5 x ATR`, TP di zona lawan, RR dihitung.
+
+`decision_node` menambah veto saat mode `scalp`: `scalping: area ideal belum terbentuk (...)` dan
+`scalping: area menuntut BUY/SELL tapi agen memilih ...`. Jadi entry hanya terjadi kalau area ideal
+sudah terbentuk — sesuai prinsip "harga tidak naik/turun dengan mudah".
+
+Konteks `h1/h4/d1/w1` tetap dianalisis agen tren, tetapi prompt keputusan menandainya sebagai latar,
+bukan acuan utama. Output menampilkan seksi `<b>5) Scalping</b>` berisi area potensial, centang gerbang,
+dan rencana entry.
+
+```bash
+run.sh cli XAUUSD m1 --mode scalp
+```
+
+Di Telegram:
+
+```
+/mode            # lihat mode aktif
+/mode scalp      # switch ke scalping
+/mode cascade    # balik ke cascade
+```
+
+Mode disimpan di tabel `chat_settings` sehingga `/schedule` ikut memakai mode terakhir chat tersebut.
+
 ## Layout
 
 ```
@@ -38,10 +80,12 @@ src/forex_agents/
   graph.py       StateGraph wiring + data gate
   memory.py      AsyncPostgresSaver checkpoints + analyses table
   recall.py      memori jangka panjang: riwayat keputusan + penilaian hasil
+  modes.py       switch teknik: cascade | scalp
+  scalp.py       area m15/m30, gerbang area ideal, rencana entry m1/m5
   runner.py      run_analysis() entrypoint
   scheduler.py   jadwal otomatis per bar tutup TF target
   render.py      Telegram HTML renderer
-  bot.py         /analyze /schedule /tf /history /memory /help
+  bot.py         /analyze /schedule /mode /tf /history /memory /help
   cli.py         one-shot CLI
 run.sh           Termux/proot launcher
 run-server.sh    Ubuntu server launcher (venv + systemd)
@@ -49,6 +93,7 @@ requirements-dev.txt  pytest + pytest-asyncio
 tests/test_core.py
 tests/test_decision.py
 tests/test_tv.py
+tests/test_scalp.py
 tests/test_llm.py
 tests/test_scheduler.py
 ```

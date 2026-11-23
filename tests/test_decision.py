@@ -37,6 +37,14 @@ async def _run(monkeypatch, decision: DecisionOut) -> dict:
     return await nodes.decision_node(_state())
 
 
+def _fake_decision(decision: DecisionOut):
+    """Stub `structured` yang selalu mengembalikan satu DecisionOut."""
+    async def fake(prompt, schema, retries=2):
+        return decision
+
+    return fake
+
+
 @pytest.mark.asyncio
 async def test_good_plan_kept(monkeypatch):
     out = await _run(monkeypatch, DecisionOut(
@@ -98,3 +106,84 @@ def test_split_message_keeps_every_line():
     assert len(chunks) > 1
     assert all(len(c) <= 500 for c in chunks)
     assert "\n".join(chunks) == text
+
+SCALP_OK = {
+    "area": {"support": {"low": 1.0990, "high": 1.0995},
+             "resistance": {"low": 1.1040, "high": 1.1045},
+             "active": {"low": 1.0990, "high": 1.0995},
+             "inside": True, "side": "buy", "touches": 3, "tolerance": 0.0002},
+    "ideal": {"ok": True, "checks": {"harga_di_area": True, "area_teruji": True,
+                                     "wick_penolakan": True, "wick_searah_area": True,
+                                     "kelelahan": True},
+              "missing": [], "rejection": {"last": "lower"}, "exhaustion": {"score": 3}},
+    "plan": {"side": "buy", "entry": 1.0992, "stop_loss": 1.0980,
+             "take_profit": 1.1040, "rr": 4.0},
+    "push": {"direction": "down", "net": -0.002, "consecutive": 3, "decay": True},
+}
+
+
+@pytest.mark.asyncio
+async def test_scalp_blocks_when_area_not_ideal(monkeypatch):
+    scalp = {**SCALP_OK, "ideal": {**SCALP_OK["ideal"], "ok": False,
+                                   "missing": ["wick_penolakan"]}}
+    monkeypatch.setattr(nodes, "structured", _fake_decision(DecisionOut(
+        action="BUY", confidence=90, entry=1.0992, stop_loss=1.0980,
+        take_profit=1.1040, reasons=[], vetoes=[])))
+    state = _state(mode="scalp", scalp=scalp)
+    res = await nodes.decision_node(state)
+    assert res["decision"]["action"] == "NO_TRADE"
+    assert any("area ideal belum terbentuk" in v for v in res["vetoes"])
+
+
+@pytest.mark.asyncio
+async def test_scalp_blocks_wrong_side(monkeypatch):
+    monkeypatch.setattr(nodes, "structured", _fake_decision(DecisionOut(
+        action="SELL", confidence=80, entry=1.0992, stop_loss=1.1004,
+        take_profit=1.0950, reasons=[], vetoes=[])))
+    res = await nodes.decision_node(_state(mode="scalp", scalp=SCALP_OK))
+    assert res["decision"]["action"] == "NO_TRADE"
+    assert any("area menuntut BUY" in v for v in res["vetoes"])
+
+
+@pytest.mark.asyncio
+async def test_scalp_allows_aligned_entry(monkeypatch):
+    monkeypatch.setattr(nodes, "structured", _fake_decision(DecisionOut(
+        action="BUY", confidence=80, entry=1.0992, stop_loss=1.0990,
+        take_profit=1.1040, reasons=["area ideal"], vetoes=[])))
+    res = await nodes.decision_node(_state(mode="scalp", scalp=SCALP_OK))
+    assert res["decision"]["action"] == "BUY"
+    assert res["vetoes"] == []
+
+
+@pytest.mark.asyncio
+async def test_cascade_mode_ignores_scalp_gate(monkeypatch):
+    scalp = {**SCALP_OK, "ideal": {**SCALP_OK["ideal"], "ok": False,
+                                   "missing": ["harga_di_area"]}}
+    monkeypatch.setattr(nodes, "structured", _fake_decision(DecisionOut(
+        action="BUY", confidence=80, entry=1.0992, stop_loss=1.0990,
+        take_profit=1.1040, reasons=[], vetoes=[])))
+    res = await nodes.decision_node(_state(mode="cascade", scalp=scalp))
+    assert res["decision"]["action"] == "BUY"
+
+
+def test_render_shows_scalp_section():
+    final = {
+        "symbol": "XAUUSD", "base_tf": "m1", "mode": "scalp", "price": 1.0992,
+        "decision": {"action": "NO_TRADE", "confidence": 40, "reasons": [], "vetoes": []},
+        "scalp": SCALP_OK,
+    }
+    out = render(final)
+    assert "5) Scalping" in out
+    assert "area m15/m30" in out
+    assert "gerbang area ideal: <b>terbentuk</b>" in out
+    assert "RR <b>4.0</b>" in out
+    assert "scalp" in out.splitlines()[0]
+
+
+def test_render_hides_scalp_section_in_cascade():
+    final = {
+        "symbol": "XAUUSD", "base_tf": "m1", "mode": "cascade", "price": 1.0992,
+        "decision": {"action": "NO_TRADE", "confidence": 40, "reasons": [], "vetoes": []},
+        "scalp": SCALP_OK,
+    }
+    assert "Scalping" not in render(final)

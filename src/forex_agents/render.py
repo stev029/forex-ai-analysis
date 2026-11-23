@@ -30,6 +30,8 @@ ZONE_ID = {
     "liquidity_sweep": "sapuan likuiditas",
 }
 
+SIDE_ID = {"buy": "beli", "sell": "jual", "none": "belum ada"}
+
 # Batas keras Telegram ~4096 karakter; sisakan ruang untuk tag HTML.
 MAX_CHUNK = 3500
 
@@ -105,6 +107,44 @@ def split_message(text: str, limit: int = MAX_CHUNK) -> list[str]:
     return chunks
 
 
+def _scalp_lines(scalp: dict) -> list[str]:
+    """Seksi 5) Scalping: area potensial, gerbang area ideal, rencana entry."""
+    area = scalp.get("area") or {}
+    ideal = scalp.get("ideal") or {}
+    plan_ = scalp.get("plan") or {}
+    checks = ideal.get("checks") or {}
+    out = ["", "<b>5) Scalping</b> (area m15/m30 → entry m1/m5)"]
+    sup = (area.get("support") or {}).get("high")
+    res = (area.get("resistance") or {}).get("low")
+    out.append(
+        f"   area potensial: support {_p(sup)} | resistensi {_p(res)}"
+        f" | di dalam area: {'ya' if area.get('inside') else 'tidak'}"
+    )
+    out.append(
+        f"   sisi: {_t(SIDE_ID, area.get('side'))} | sentuhan {area.get('touches', 0)}"
+    )
+    out.append(
+        "   gerbang area ideal: " + ("<b>terbentuk</b>" if ideal.get("ok") else "belum")
+    )
+    out.append(
+        f"   {'✓' if checks.get('harga_di_area') else '✗'} harga di area"
+        f" | {'✓' if checks.get('area_teruji') else '✗'} area teruji"
+        f" | {'✓' if checks.get('wick_penolakan') else '✗'} wick penolakan"
+        f" | {'✓' if checks.get('wick_searah_area') else '✗'} wick searah"
+        f" | {'✓' if checks.get('kelelahan') else '✗'} kelelahan"
+    )
+    if plan_.get("entry"):
+        out.append(
+            f"   rencana {_t(SIDE_ID, plan_.get('side'))}: "
+            f"entry <code>{_p(plan_.get('entry'))}</code>  "
+            f"SL <code>{_p(plan_.get('stop_loss'))}</code>  "
+            f"TP <code>{_p(plan_.get('take_profit'))}</code>  RR <b>{plan_.get('rr')}</b>"
+        )
+    else:
+        out.append("   rencana: belum ada sisi yang sah")
+    return out
+
+
 def render(final: dict) -> str:
     d = final.get("decision") or {}
     t = final.get("trend") or {}
@@ -113,9 +153,10 @@ def render(final: dict) -> str:
     action = d.get("action", "NO_TRADE")
 
     icon = {"BUY": "🟢", "SELL": "🔴"}.get(action, "⚪")
+    mode_tag = " · scalp" if final.get("mode") == "scalp" else ""
     lines: list[str] = [
         f"{icon} <b>{ACTION_ID.get(action, action)}</b> — {_esc(final.get('symbol'))} "
-        f"<code>{_esc(final.get('base_tf'))}</code>",
+        f"<code>{_esc(final.get('base_tf'))}</code>{mode_tag}",
         f"keyakinan: <b>{d.get('confidence', 0)}</b>/100   harga: <code>{_p(final.get('price'))}</code>",
         _stamp_line(final),
         "",
@@ -150,12 +191,17 @@ def render(final: dict) -> str:
     for vt in d.get("vetoes") or []:
         lines.append(f"   − {_esc(vt)}")
 
+    scalp = final.get("scalp") or {}
+    scalp_shown = bool(final.get("mode") == "scalp" and scalp)
+    if scalp_shown:
+        lines += _scalp_lines(scalp)
+
     mem = final.get("memory") or {}
     if mem.get("count"):
         tally_ = mem.get("tally") or {}
         lines += [
             "",
-            f"<b>5) Ingatan</b> ({mem['count']} analisis terakhir)",
+            f"<b>{6 if scalp_shown else 5}) Ingatan</b> ({mem['count']} analisis terakhir)",
             f"   hasil: tp {tally_.get('tp', 0)} | sl {tally_.get('sl', 0)} | "
             f"terbuka {tally_.get('terbuka', 0)} | netral {tally_.get('netral', 0)}",
             f"   aksi berulang: {_esc(mem.get('streak_action'))} x{mem.get('streak_count')}",

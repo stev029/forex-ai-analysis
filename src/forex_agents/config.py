@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     market_fallback: str = ""
     default_symbol: str = "EURUSD"
     default_timeframe: str = "m1"
+    default_mode: str = "cascade"
 
     # TradingView (MARKET_PROVIDER=tradingview)
     tv_exchange: str = "FX"
