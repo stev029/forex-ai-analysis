@@ -107,6 +107,34 @@ def split_message(text: str, limit: int = MAX_CHUNK) -> list[str]:
     return chunks
 
 
+def _auto_lines(auto: dict) -> list[str]:
+    """Seksi pemilihan TF otomatis: pilihan utama + saran multi-timeframe."""
+    out = ["", "<b>5) Timeframe otomatis</b>"]
+    out.append(
+        f"   dipilih: <code>{_esc(auto.get('primary'))}</code>"
+        f"  (tren {_esc(auto.get('trend_tf'))}, validasi {_esc(auto.get('validation_tf'))})"
+    )
+    ideal = auto.get("ideal") or []
+    if auto.get("multi"):
+        out.append(
+            "   multi-timeframe: <b>" + ", ".join(_esc(t) for t in ideal) + "</b>"
+            " — lebih dari satu TF ideal untuk entry"
+        )
+    elif ideal:
+        out.append(f"   ideal: <code>{_esc(ideal[0])}</code> (hanya satu TF lolos ambang)")
+    else:
+        out.append(
+            f"   ideal: belum ada TF yang lolos ambang skor {auto.get('threshold')}"
+        )
+    for row in (auto.get("ranked") or [])[:4]:
+        out.append(
+            f"   • {_esc(row.get('tf'))} skor <b>{row.get('score')}</b>"
+            f" {'ideal' if row.get('ideal') else 'belum'}"
+            f" — {_esc('; '.join(row.get('reasons') or []))}"
+        )
+    return out
+
+
 def _scalp_lines(scalp: dict) -> list[str]:
     """Seksi 5) Scalping: area potensial, gerbang area ideal, rencana entry."""
     area = scalp.get("area") or {}
@@ -154,6 +182,8 @@ def render(final: dict) -> str:
 
     icon = {"BUY": "🟢", "SELL": "🔴"}.get(action, "⚪")
     mode_tag = " · scalp" if final.get("mode") == "scalp" else ""
+    if (final.get("auto_tf") or {}).get("primary"):
+        mode_tag += " · auto-tf"
     lines: list[str] = [
         f"{icon} <b>{ACTION_ID.get(action, action)}</b> — {_esc(final.get('symbol'))} "
         f"<code>{_esc(final.get('base_tf'))}</code>{mode_tag}",
@@ -196,12 +226,18 @@ def render(final: dict) -> str:
     if scalp_shown:
         lines += _scalp_lines(scalp)
 
+    auto = final.get("auto_tf") or {}
+    auto_shown = bool(auto.get("primary"))
+    if auto_shown:
+        lines += _auto_lines(auto)
+
     mem = final.get("memory") or {}
     if mem.get("count"):
         tally_ = mem.get("tally") or {}
+        nxt = 5 + int(scalp_shown) + int(auto_shown)
         lines += [
             "",
-            f"<b>{6 if scalp_shown else 5}) Ingatan</b> ({mem['count']} analisis terakhir)",
+            f"<b>{nxt}) Ingatan</b> ({mem['count']} analisis terakhir)",
             f"   hasil: tp {tally_.get('tp', 0)} | sl {tally_.get('sl', 0)} | "
             f"terbuka {tally_.get('terbuka', 0)} | netral {tally_.get('netral', 0)}",
             f"   aksi berulang: {_esc(mem.get('streak_action'))} x{mem.get('streak_count')}",

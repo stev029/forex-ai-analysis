@@ -7,6 +7,9 @@ import logging
 from typing import Any
 
 from .config import get_settings
+from .autotf import as_text as autotf_text
+from .autotf import choose as autotf_choose
+from .autotf import is_auto
 from .indicators import snapshot
 from .llm import structured
 from .market import get_provider, last_price, pip_size
@@ -93,7 +96,12 @@ async def _quote(provider: Any, symbol: str) -> dict:
 
 async def fetch_node(state: AnalysisState) -> dict:
     s = get_settings()
-    tf_map = cascade(state["base_tf"])
+    auto = is_auto(state.get("base_tf"))
+    tf_map = (
+        {"trend": "", "validation": "", "critical": ""}
+        if auto
+        else cascade(state["base_tf"])
+    )
     pip = pip_size(state["symbol"])
     snaps: dict[str, dict] = {}
     frames: dict[str, Any] = {}
@@ -105,10 +113,11 @@ async def fetch_node(state: AnalysisState) -> dict:
         names.append(s.market_fallback)
 
     provider = None
+    probe_tf = tf_map["critical"] or "m1"
     for name in names:
         try:
             candidate = get_provider(name)
-            await _fetch_df(candidate, state["symbol"], tf_map["critical"], 60)
+            await _fetch_df(candidate, state["symbol"], probe_tf, 60)
         except Exception as exc:  # noqa: BLE001 - provider mati, coba berikutnya
             errors.append(f"provider {name}: {exc}")
             log.warning("provider %s tidak bisa dipakai: %s", name, exc)
@@ -133,7 +142,7 @@ async def fetch_node(state: AnalysisState) -> dict:
             "trace": trace + ["fetch: semua provider gagal"],
         }
 
-    for role in ("trend", "validation", "critical"):
+    for role in (() if auto else ("trend", "validation", "critical")):
         tf = tf_map[role]
         try:
             df = await _fetch_df(provider, state["symbol"], tf, 300)
@@ -144,7 +153,7 @@ async def fetch_node(state: AnalysisState) -> dict:
             errors.append(f"fetch {tf}: {exc}")
             log.exception("fetch failed for %s %s", state["symbol"], tf)
 
-    if state.get("mode") == "scalp":
+    if state.get("mode") == "scalp" or auto:
         for tf in all_tfs():
             if tf in snaps:
                 continue
@@ -175,7 +184,7 @@ async def fetch_node(state: AnalysisState) -> dict:
         or ""
     )
     scalp_block: dict = {}
-    if state.get("mode") == "scalp":
+    if state.get("mode") == "scalp" and not auto:
         try:
             scalp_block = scalp_read(
                 price,
@@ -188,6 +197,25 @@ async def fetch_node(state: AnalysisState) -> dict:
         except Exception as exc:  # noqa: BLE001 - scalping tidak boleh mematikan cascade
             errors.append(f"scalp: {exc}")
             log.exception("scalp read failed for %s", state["symbol"])
+    auto_block: dict = {}
+    if auto:
+        try:
+            auto_block = autotf_choose(frames, price, pip)
+            tf_map = {
+                "trend": auto_block["trend_tf"],
+                "validation": auto_block["validation_tf"],
+                "critical": auto_block["critical_tf"],
+            }
+            trace.append(
+                f"auto-tf: pilih {auto_block['primary']} "
+                f"(ideal {','.join(auto_block['ideal']) or '-'})"
+            )
+            if not auto_block["primary"]:
+                errors.append("auto-tf: tidak ada timeframe yang bisa diskor")
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"auto-tf: {exc}")
+            log.exception("auto-tf gagal untuk %s", state["symbol"])
+
     return {
         "trend_tf": tf_map["trend"],
         "validation_tf": tf_map["validation"],
@@ -200,6 +228,7 @@ async def fetch_node(state: AnalysisState) -> dict:
         "market": market_state().as_dict(),
         "pip": pip,
         "scalp": scalp_block,
+        "auto_tf": auto_block,
         "errors": errors,
         "trace": trace,
     }
@@ -280,6 +309,19 @@ async def decision_node(state: AnalysisState) -> dict:
     snap = state["snapshots"].get(state["critical_tf"], {})
     atr_pips = snap.get("atr_pips", 0.0)
     scalp = state.get("scalp") or {}
+    auto_block = ""
+    auto_tf = state.get("auto_tf") or {}
+    if auto_tf.get("primary"):
+        auto_block = (
+            "\nMODE AUTO-TF. Timeframe entry dipilih sistem dari skor deterministik.\n"
+            f"TF entry: {auto_tf.get('primary')} "
+            f"(tren {auto_tf.get('trend_tf')}, validasi {auto_tf.get('validation_tf')})\n"
+            f"TF ideal: {', '.join(auto_tf.get('ideal') or []) or 'belum ada'}\n"
+            f"Peringkat:\n{autotf_text(auto_tf)}\n"
+            "Aturan: pakai TF entry di atas untuk entry/SL/TP. Bila >= 2 TF ideal, "
+            "sebutkan di reasons bahwa setup berlaku multi-timeframe. Bila tidak ada TF "
+            "ideal, action wajib NO_TRADE.\n"
+        )
     scalp_block = ""
     if state.get("mode") == "scalp" and scalp:
         scalp_block = (
@@ -296,7 +338,7 @@ async def decision_node(state: AnalysisState) -> dict:
         f"min_rr = {s.min_rr}\nmax_spread_pips = {s.max_spread_pips}\n"
         f"Trend:\n{_fmt(state.get('trend', {}))}\n"
         f"Validation:\n{_fmt(state.get('validation', {}))}\n"
-        f"Critical:\n{_fmt(state.get('critical', {}))}{scalp_block}{_mem(state)}"
+        f"Critical:\n{_fmt(state.get('critical', {}))}{scalp_block}{auto_block}{_mem(state)}"
     )
     try:
         out: DecisionOut = await structured(prompt, DecisionOut)
@@ -351,6 +393,14 @@ async def decision_node(state: AnalysisState) -> dict:
                 vetoes.append(
                     f"scalping: area menuntut {side.upper()} tapi agen memilih {out.action}"
                 )
+
+    # Mode auto-TF: tidak ada TF yang lolos ambang = tidak ada alasan entry.
+    if auto_tf.get("primary") and out.action in ("BUY", "SELL"):
+        if not (auto_tf.get("ideal") or []):
+            vetoes.append(
+                f"auto-tf: tidak ada timeframe yang lolos ambang skor "
+                f"{auto_tf.get('threshold')}"
+            )
 
     if vetoes and out.action != "NO_TRADE":
         out.action = "NO_TRADE"

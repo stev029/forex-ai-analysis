@@ -25,6 +25,7 @@ class AnalysisState(TypedDict, total=False):
     memory: dict[str, Any]
     mode: str
     scalp: dict[str, Any]
+    auto_tf: dict[str, Any]
 
     # agent outputs (one per stage)
     trend: dict[str, Any]

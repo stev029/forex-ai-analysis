@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable
 
+from .autotf import is_auto
 from .timeframes import cascade, normalize_tf
 
 log = logging.getLogger(__name__)
@@ -42,12 +43,17 @@ ANALYSIS_TIMEOUT = 240.0
 # --------------------------------------------------------------------- helpers
 def auto_interval(base_tf: str) -> int:
     """Interval default (menit) = panjang TF target terbesar dari cascade."""
+    if is_auto(base_tf):
+        # TF dasar dipilih sendiri tiap tick, jadi pakai ritme scalping tercepat.
+        return TF_MINUTES["m15"]
     base = normalize_tf(base_tf)
     return TF_MINUTES[cascade(base)["trend"]]
 
 
 def targets(base_tf: str) -> tuple[str, str]:
     """Dua timeframe di atas TF dasar: (tren, validasi)."""
+    if is_auto(base_tf):
+        return "m30", "m15"
     base = normalize_tf(base_tf)
     m = cascade(base)
     return m["trend"], m["validation"]

@@ -17,6 +17,34 @@ Ask for `m1` and the graph resolves:
 Timeframes are resolved by `src/forex_agents/timeframes.py:cascade()`; ladder is
 `m1 m5 m15 m30 h1 h4 d1 w1`, so `m5 → m30/m15/m5`, `h1 → d1/h4/h1` (clamped at the top).
 
+## Timeframe otomatis (`auto`)
+
+`/analyze XAUUSD auto` (atau `--tf auto`, `/schedule add XAUUSD auto`) menyerahkan pemilihan TF
+ke `src/forex_agents/autotf.py`. Semua TF `m1…w1` diskor 0-100 secara deterministik, lalu TF
+skor tertinggi jadi acuan entry dan cascade-nya (`+2 / +1 / base`) dipakai untuk 4 tahap.
+
+| komponen | bobot | syarat |
+|---|---|---|
+| `trend` | 25 | EMA20/50/200 tidak `mixed` |
+| `area` | 25 | harga <= 0.5 x ATR dari swing terdekat |
+| `momentum` | 20 | `abs(RSI14 - 50) / 25` |
+| `wick` | 15 | candle terakhir punya wick penolakan >= 1.5x body |
+| `exhaust` | 15 | RSI ekstrem + MACD decay + >= 4 candle searah |
+| `fresh` | 10 | bar terakhir <= 2 x panjang TF |
+| `vol` | 10 | ATR >= 3 pips |
+
+Ambang `IDEAL_SCORE = 60`, `STRONG_SCORE = 75`. Bila >= 2 TF lolos ambang, hasilnya dilaporkan
+sebagai saran multi-timeframe (`auto_tf.multi = True`) dan decision node wajib menyebutnya di
+`reasons`. Bila tidak ada TF yang lolos, decision node memveto BUY/SELL menjadi `NO_TRADE`
+(`auto-tf: tidak ada timeframe yang lolos ambang skor 60`). Pasar datar (ATR/variasi nol)
+selalu skor 0.
+
+Blok hasil: `auto_tf = {primary, trend_tf, validation_tf, critical_tf, ideal, multi, ranked,
+skipped, threshold}`; render menampilkannya sebagai seksi `<b>5) Timeframe otomatis</b>` dan
+menambah tag `· auto-tf` di header. `/tf auto` menjelaskan mode ini; `/memory` menolak TF auto
+karena riwayat terikat TF eksplisit. Cron untuk TF auto memakai ritme `m15` (15 menit) dan
+target `m30/m15`.
+
 Indicators are computed deterministically (`indicators.py`) and the LLM only receives a compact
 numeric snapshot — it never sees raw candles and cannot invent prices. The decision node then
 applies hard guardrails (RR >= `MIN_RR`, stop <= 3x ATR, SL/TP on the correct side of entry);
@@ -70,6 +98,7 @@ Mode disimpan di tabel `chat_settings` sehingga `/schedule` ikut memakai mode te
 src/forex_agents/
   config.py      pydantic-settings env loading
   timeframes.py  ladder, aliases, cascade(), yfinance interval map
+  autotf.py      skor TF 0-100, pilih TF entry, saran multi-timeframe
   market.py      YFinanceProvider + get_provider() dispatch
   market_tv.py     TradingViewProvider (websocket tradingview-api)
   indicators.py  EMA/ATR/RSI/MACD, swing points, structure, snapshot()

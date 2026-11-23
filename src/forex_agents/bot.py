@@ -22,6 +22,7 @@ from .memory import (
     set_chat_mode,
     touch_schedule,
 )
+from .autotf import AUTO, is_auto
 from .modes import MODES, describe, normalize_mode
 from .render import _esc, render, split_message
 from .runner import load_memory, run_analysis
@@ -42,8 +43,9 @@ SCHED: Scheduler | None = None
 
 HELP = (
     "<b>Bot cascade forex</b>\n"
-    "/analyze [SIMBOL] [TF] — jalankan cascade 4 tahap\n"
+    "/analyze [SIMBOL] [TF|auto] — jalankan cascade 4 tahap\n"
     "   contoh: <code>/analyze EURUSD m1</code>\n"
+    "   contoh: <code>/analyze XAUUSD auto</code> — TF entry dipilih sistem\n"
     "/schedule add [SIMBOL] [TF] [INTERVAL] — analisis otomatis berkala\n"
     "   contoh: <code>/schedule add XAUUSD m1</code> → tiap 15 menit\n"
     "   contoh: <code>/schedule add EURUSD m1 30m</code> → tiap 30 menit\n"
@@ -51,6 +53,7 @@ HELP = (
     "/schedule del &lt;ID|all&gt; — hapus jadwal\n"
     "/schedule run &lt;ID&gt; — jalankan sekarang\n"
     "/tf m1 — lihat pemetaan timeframe dari TF dasar\n"
+    "/tf auto — TF dipilih sistem (multi-timeframe bila &gt;= 2 TF ideal)\n"
     "/mode [scalp|cascade] — ganti teknik analisis kapan pun\n"
     "/symbols — daftar simbol/alias yang didukung\n"
     "/history — 5 analisis terakhir\n"
@@ -58,6 +61,9 @@ HELP = (
     "   contoh: <code>/memory XAUUSD m1</code>\n"
     "/help — pesan ini\n\n"
     "Tahapan: tren (base+2) → validasi (base+1) → area kritis (base) → keputusan.\n"
+    "Mode auto: semua TF m1…w1 diskor 0-100 (tren, momentum, jarak swing, wick, "
+    "kelelahan, kesegaran bar, volatilitas). TF skor tertinggi jadi acuan entry; "
+    "TF lain yang lolos ambang 60 dilaporkan sebagai saran multi-timeframe.\n"
     "Interval jadwal mengikuti TF target terbesar: m1 → 15m, m5 → 30m, m15 → 1h, "
     "m30 → 4h, h1 → 1d, h4 → 1w."
 )
@@ -94,6 +100,14 @@ async def cmd_tf(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     if not await _guard(update):
         return
     raw = ctx.args[0] if ctx.args else get_settings().default_timeframe
+    if is_auto(raw):
+        await update.effective_message.reply_text(
+            "dasar <code>auto</code>\n"
+            "grafik menskor semua TF (m1…w1) lalu memilih sendiri TF entry.\n"
+            "bila >= 2 TF lolos ambang, semuanya disarankan sebagai multi-timeframe.",
+            parse_mode=ParseMode.HTML,
+        )
+        return
     try:
         m = cascade(raw)
     except ValueError as exc:
@@ -243,6 +257,13 @@ async def cmd_memory(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     args = list(ctx.args or [])
     symbol = args[0] if args else s.default_symbol
     tf_raw = args[1] if len(args) > 1 else s.default_timeframe
+    if is_auto(tf_raw):
+        await update.effective_message.reply_text(
+            "mode auto memilih TF sendiri tiap analisis, jadi riwayat tidak terikat satu TF.\n"
+            "pakai TF eksplisit: <code>/memory XAUUSD m1</code>",
+            parse_mode=ParseMode.HTML,
+        )
+        return
     try:
         base = normalize_tf(tf_raw)
     except ValueError as exc:

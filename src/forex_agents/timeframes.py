@@ -7,11 +7,15 @@ from __future__ import annotations
 
 LADDER: list[str] = ["m1", "m5", "m15", "m30", "h1", "h4", "d1", "w1"]
 
+# `auto` bukan TF nyata: grafik memilih TF sendiri lewat autotf.choose().
+AUTO = "auto"
+
 ALIASES = {
     "1m": "m1", "5m": "m5", "15m": "m15", "30m": "m30",
     "1h": "h1", "4h": "h4", "1d": "d1", "1w": "w1",
     "m1": "m1", "m5": "m5", "m15": "m15", "m30": "m30",
     "h1": "h1", "h4": "h4", "d1": "d1", "w1": "w1",
+    "auto": AUTO, "otomatis": AUTO, "autotf": AUTO, "auto-tf": AUTO,
 }
 
 # yfinance interval + period per timeframe
@@ -39,6 +43,8 @@ def normalize_tf(raw: str) -> str:
 def cascade(base_tf: str) -> dict[str, str]:
     """Return {'trend': tf, 'validation': tf, 'critical': tf} for a base timeframe."""
     base = normalize_tf(base_tf)
+    if base == AUTO:
+        raise ValueError("timeframe auto tidak punya cascade tetap; pakai autotf.choose()")
     idx = LADDER.index(base)
     trend_idx = min(idx + 2, len(LADDER) - 1)
     val_idx = min(idx + 1, len(LADDER) - 1)
