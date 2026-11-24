@@ -7,6 +7,8 @@ import logging
 from typing import Any
 
 from .config import get_settings
+from .advice import as_text as advice_text
+from .advice import build as advice_build
 from .autotf import as_text as autotf_text
 from .autotf import choose as autotf_choose
 from .autotf import is_auto
@@ -331,6 +333,20 @@ async def decision_node(state: AnalysisState) -> dict:
             "Aturan: entry hanya bila area ideal terbentuk (harga di area, area teruji, "
             "wick penolakan searah, kelelahan dorongan). Jika tidak, action wajib NO_TRADE.\n"
         )
+    advice_block = ""
+    advice_data: dict[str, Any] = {}
+    try:
+        advice_data = advice_build({**state, "decision": {}}, min_rr=s.min_rr)
+        if advice_data.get("ok"):
+            advice_block = (
+                "\nSaran entry deterministik (dari struktur, bukan karangan):\n"
+                f"{advice_text(advice_data)}\n"
+                "Aturan: entry/SL/TP yang kamu tulis harus berada dalam +/-1 ATR dari "
+                "angka saran ini. Sebut sisi yang searah tren sebagai pilihan utama.\n"
+            )
+    except Exception as exc:  # noqa: BLE001 - saran tidak boleh mematikan keputusan
+        log.warning("advice gagal untuk %s: %s", state["symbol"], exc)
+
     prompt = (
         f"{_DECISION_SYS}{_LANG}\n\nSymbol: {state['symbol']}\n"
         f"Execution TF: {state['critical_tf']}\nPrice: {state.get('price')}\n"
@@ -338,7 +354,7 @@ async def decision_node(state: AnalysisState) -> dict:
         f"min_rr = {s.min_rr}\nmax_spread_pips = {s.max_spread_pips}\n"
         f"Trend:\n{_fmt(state.get('trend', {}))}\n"
         f"Validation:\n{_fmt(state.get('validation', {}))}\n"
-        f"Critical:\n{_fmt(state.get('critical', {}))}{scalp_block}{auto_block}{_mem(state)}"
+        f"Critical:\n{_fmt(state.get('critical', {}))}{scalp_block}{auto_block}{advice_block}{_mem(state)}"
     )
     try:
         out: DecisionOut = await structured(prompt, DecisionOut)
@@ -406,5 +422,20 @@ async def decision_node(state: AnalysisState) -> dict:
         out.action = "NO_TRADE"
         out.confidence = min(out.confidence, 40)
 
-    return {"decision": out.model_dump(), "vetoes": vetoes,
-            "trace": [f"decision: {out.action} conf={out.confidence} rr={out.rr}"]}
+    # Saran entry deterministik: selalu ada, walau keputusan NO_TRADE.
+    trace: list[str] = []
+    if not advice_data.get("ok"):
+        try:
+            advice_data = advice_build(
+                {**state, "decision": out.model_dump()}, min_rr=s.min_rr
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.warning("advice gagal untuk %s: %s", state["symbol"], exc)
+            advice_data = {}
+    trace.append(
+        f"advice: {advice_data.get('aligned')} "
+        f"rr {((advice_data.get('primary') or {}).get('rr'))}"
+    )
+
+    return {"decision": out.model_dump(), "vetoes": vetoes, "advice": advice_data,
+            "trace": trace + [f"decision: {out.action} conf={out.confidence} rr={out.rr}"]}

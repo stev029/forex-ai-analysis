@@ -45,6 +45,25 @@ menambah tag `· auto-tf` di header. `/tf auto` menjelaskan mode ini; `/memory` 
 karena riwayat terikat TF eksplisit. Cron untuk TF auto memakai ritme `m15` (15 menit) dan
 target `m30/m15`.
 
+## Saran entry (BUY & SELL + SL/TP/RR)
+
+`src/forex_agents/advice.py:build()` selalu menghitung dua skenario lengkap, termasuk saat
+keputusan berakhir `NO_TRADE`, supaya trader tetap punya angka acuan. Semua level berasal dari
+struktur (swing high/low, zona kritis, `range_high/low`) + buffer `0.5 x ATR`, bukan karangan LLM.
+
+- `_nearest(values, price, side)` memilih level terdekat di sisi yang benar: di bawah harga untuk
+  BUY, di atas harga untuk SELL. Anchor yang lebih jauh dari `3 x ATR` dibuang supaya stop tidak
+  selebar 698 pips pada XAUUSD.
+- TP diambil dari zona lawan terdekat; bila RR-nya di bawah `min_rr`, TP digeser ke
+  `FALLBACK_RR = 2.0 x risk`.
+- Sisi yang searah `trend.bias` jadi `primary`, sisanya `alt`. Bias `range` → pilih RR terbesar.
+- `valid = rr >= min_rr and risk <= 3 x ATR`; `note` menjelaskan pelanggarannya.
+
+Blok `advice = {ok, bias, aligned, atr_pips, buffer, levels, primary, alt, buy, sell, min_rr}`
+dirender sebagai seksi `<b>5) Saran entry</b>` (nomor seksi bergeser otomatis bila mode scalp
+atau auto-tf aktif). Prompt decision node juga menerima ringkasannya dengan aturan: entry/SL/TP
+usulan LLM harus dalam `+/-1 ATR` dari angka saran.
+
 Indicators are computed deterministically (`indicators.py`) and the LLM only receives a compact
 numeric snapshot — it never sees raw candles and cannot invent prices. The decision node then
 applies hard guardrails (RR >= `MIN_RR`, stop <= 3x ATR, SL/TP on the correct side of entry);
@@ -99,6 +118,7 @@ src/forex_agents/
   config.py      pydantic-settings env loading
   timeframes.py  ladder, aliases, cascade(), yfinance interval map
   autotf.py      skor TF 0-100, pilih TF entry, saran multi-timeframe
+  advice.py      saran BUY/SELL + SL/TP/RR deterministik dari struktur
   market.py      YFinanceProvider + get_provider() dispatch
   market_tv.py     TradingViewProvider (websocket tradingview-api)
   indicators.py  EMA/ATR/RSI/MACD, swing points, structure, snapshot()

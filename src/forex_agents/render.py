@@ -107,9 +107,9 @@ def split_message(text: str, limit: int = MAX_CHUNK) -> list[str]:
     return chunks
 
 
-def _auto_lines(auto: dict) -> list[str]:
+def _auto_lines(auto: dict, n: int = 5) -> list[str]:
     """Seksi pemilihan TF otomatis: pilihan utama + saran multi-timeframe."""
-    out = ["", "<b>5) Timeframe otomatis</b>"]
+    out = ["", f"<b>{n}) Timeframe otomatis</b>"]
     out.append(
         f"   dipilih: <code>{_esc(auto.get('primary'))}</code>"
         f"  (tren {_esc(auto.get('trend_tf'))}, validasi {_esc(auto.get('validation_tf'))})"
@@ -135,13 +135,53 @@ def _auto_lines(auto: dict) -> list[str]:
     return out
 
 
-def _scalp_lines(scalp: dict) -> list[str]:
-    """Seksi 5) Scalping: area potensial, gerbang area ideal, rencana entry."""
+def _advice_lines(adv: dict, n: int = 5) -> list[str]:
+    """Seksi saran entry: skenario utama + alternatif, lengkap SL/TP/RR."""
+    if not adv.get("ok"):
+        return []
+
+    def row(tag: str, r: dict) -> list[str]:
+        if not r:
+            return []
+        side = "BELI" if r.get("side") == "buy" else "JUAL"
+        mark = " ← searah tren" if r.get("aligned") else ""
+        ok = "layak" if r.get("valid") else "belum layak"
+        out = [
+            f"   {tag} {side}{mark} — {ok}",
+            f"     entry <code>{_p(r.get('entry'))}</code>  "
+            f"SL <code>{_p(r.get('stop_loss'))}</code>  "
+            f"TP <code>{_p(r.get('take_profit'))}</code>",
+            f"     RR <b>{r.get('rr')}</b>  risiko {r.get('risk_pips')} pips  "
+            f"reward {r.get('reward_pips')} pips",
+        ]
+        if r.get("note"):
+            out.append(f"     catatan: {_esc(r['note'])}")
+        return out
+
+    lines = [
+        "",
+        f"<b>{n}) Saran entry</b> (tren {_t(BIAS_ID, adv.get('bias'))}, "
+        f"min RR {adv.get('min_rr')})",
+    ]
+    lines += row("utama:", adv.get("primary") or {})
+    lines += row("alternatif:", adv.get("alt") or {})
+    lv = adv.get("levels") or {}
+    lines.append(
+        f"   acuan: swing low <code>{_p(lv.get('swing_low'))}</code>  "
+        f"swing high <code>{_p(lv.get('swing_high'))}</code>  "
+        f"support <code>{_p(lv.get('support'))}</code>  "
+        f"resistensi <code>{_p(lv.get('resistance'))}</code>"
+    )
+    return lines
+
+
+def _scalp_lines(scalp: dict, n: int = 5) -> list[str]:
+    """Seksi Scalping: area potensial, gerbang area ideal, rencana entry."""
     area = scalp.get("area") or {}
     ideal = scalp.get("ideal") or {}
     plan_ = scalp.get("plan") or {}
     checks = ideal.get("checks") or {}
-    out = ["", "<b>5) Scalping</b> (area m15/m30 → entry m1/m5)"]
+    out = ["", f"<b>{n}) Scalping</b> (area m15/m30 → entry m1/m5)"]
     sup = (area.get("support") or {}).get("high")
     res = (area.get("resistance") or {}).get("low")
     out.append(
@@ -223,18 +263,27 @@ def render(final: dict) -> str:
 
     scalp = final.get("scalp") or {}
     scalp_shown = bool(final.get("mode") == "scalp" and scalp)
+    n = 5
     if scalp_shown:
-        lines += _scalp_lines(scalp)
+        lines += _scalp_lines(scalp, n)
+        n += 1
+
+    adv = final.get("advice") or {}
+    adv_shown = bool(adv.get("ok"))
+    if adv_shown:
+        lines += _advice_lines(adv, n)
+        n += 1
 
     auto = final.get("auto_tf") or {}
     auto_shown = bool(auto.get("primary"))
     if auto_shown:
-        lines += _auto_lines(auto)
+        lines += _auto_lines(auto, n)
+        n += 1
 
     mem = final.get("memory") or {}
     if mem.get("count"):
         tally_ = mem.get("tally") or {}
-        nxt = 5 + int(scalp_shown) + int(auto_shown)
+        nxt = n
         lines += [
             "",
             f"<b>{nxt}) Ingatan</b> ({mem['count']} analisis terakhir)",
