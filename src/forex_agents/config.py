@@ -14,6 +14,22 @@ class Settings(BaseSettings):
     llm_model: str = "Tier2"
     llm_temperature: float = 0.1
 
+    # Model per-tahap. Kosong = pakai llm_model. Tahap berat (keputusan entry)
+    # sebaiknya pakai model kuat; tahap ringan (tren/validasi/area) murah.
+    llm_model_trend: str = ""
+    llm_model_validation: str = ""
+    llm_model_critical: str = ""
+    llm_model_decision: str = ""
+
+    # Fallback bila model utama tahap gagal (kuota habis / model tidak ada).
+    # Daftar dipisah koma, mis. "gemini/gemini-3.5-flash-lite,Free".
+    llm_fallback_trend: str = ""
+    llm_fallback_validation: str = ""
+    llm_fallback_critical: str = ""
+    llm_fallback_decision: str = ""
+    # Fallback terakhir untuk semua tahap.
+    llm_fallbacks: str = ""
+
     database_url: str = ""
 
     telegram_bot_token: str = ""
@@ -43,6 +59,32 @@ class Settings(BaseSettings):
             chunk = chunk.strip()
             if chunk.isdigit():
                 out.add(int(chunk))
+        return out
+
+    def model_for(self, stage: str) -> str:
+        """Model untuk satu tahap: trend/validation/critical/decision."""
+        mapping = {
+            "trend": self.llm_model_trend,
+            "validation": self.llm_model_validation,
+            "critical": self.llm_model_critical,
+            "decision": self.llm_model_decision,
+        }
+        return (mapping.get(stage) or "").strip() or self.llm_model
+
+    def fallbacks_for(self, stage: str) -> list[str]:
+        """Rantai fallback tahap + rantai global, tanpa duplikat."""
+        stage_map = {
+            "trend": self.llm_fallback_trend,
+            "validation": self.llm_fallback_validation,
+            "critical": self.llm_fallback_critical,
+            "decision": self.llm_fallback_decision,
+        }
+        out: list[str] = []
+        for raw in (stage_map.get(stage, ""), self.llm_fallbacks):
+            for name in (raw or "").replace(";", ",").split(","):
+                clean = name.strip()
+                if clean and clean not in out and clean != self.model_for(stage):
+                    out.append(clean)
         return out
 
 

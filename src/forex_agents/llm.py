@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from contextvars import ContextVar
 from typing import Any, TypeVar
 
 from langchain_openai import ChatOpenAI
@@ -14,11 +15,20 @@ from .config import get_settings
 log = logging.getLogger(__name__)
 T = TypeVar("T", bound=BaseModel)
 
+# Model yang benar-benar dipakai pada panggilan `structured()` terakhir
+# (bisa berbeda dari model yang diminta bila fallback aktif).
+_USED_MODEL: ContextVar[str] = ContextVar("forex_used_model", default="")
 
-def get_llm() -> ChatOpenAI:
+
+def used_model() -> str:
+    """Nama model yang sukses pada `structured()` terakhir di task ini."""
+    return _USED_MODEL.get()
+
+
+def get_llm(model: str | None = None) -> ChatOpenAI:
     s = get_settings()
     return ChatOpenAI(
-        model=s.llm_model,
+        model=model or s.llm_model,
         api_key=s.llm_api_key,
         base_url=s.llm_base_url,
         temperature=s.llm_temperature,
@@ -68,9 +78,47 @@ def _coerce(schema: type[T], payload: Any) -> T:
         return schema.model_validate(fixed)
 
 
-async def structured(prompt: str, schema: type[T], retries: int = 2) -> T:
-    """Try native structured output, fall back to JSON-in-text parsing."""
-    llm = get_llm()
+def model_chain(model: str | None, fallbacks: list[str] | None = None,
+                default: str | None = None) -> list[str]:
+    """Urutan model: utama dulu, lalu fallback; kosong & duplikat dibuang."""
+    chain: list[str] = []
+    for name in [model, *(fallbacks or [])]:
+        clean = (name or "").strip()
+        if clean and clean not in chain:
+            chain.append(clean)
+    if not chain:
+        chain = [(default or get_settings().llm_model)]
+    return chain
+
+
+async def structured(prompt: str, schema: type[T], retries: int = 2,
+                     model: str | None = None,
+                     fallbacks: list[str] | None = None) -> T:
+    """Try native structured output, fall back to JSON-in-text parsing.
+
+    `model` adalah model utama; `fallbacks` dicoba berurutan bila model utama
+    gagal total (mis. kuota habis). Duplikat dan nama kosong dibuang.
+    """
+    chain = model_chain(model, fallbacks)
+
+    last_err: Exception | None = None
+    for idx, name in enumerate(chain):
+        try:
+            out = await _structured_once(prompt, schema, retries, name)
+            _USED_MODEL.set(name)
+            return out
+        except Exception as exc:  # noqa: BLE001 - coba model berikutnya
+            last_err = exc
+            if idx + 1 < len(chain):
+                log.warning("model %s gagal (%s), fallback ke %s",
+                            name, exc, chain[idx + 1])
+
+    raise RuntimeError(f"structured output failed: {last_err}")
+
+async def _structured_once(prompt: str, schema: type[T], retries: int,
+                           model: str) -> T:
+    """Satu model saja: native structured output lalu JSON-in-text."""
+    llm = get_llm(model)
     last_err: Exception | None = None
 
     try:

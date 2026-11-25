@@ -13,7 +13,7 @@ from .autotf import as_text as autotf_text
 from .autotf import choose as autotf_choose
 from .autotf import is_auto
 from .indicators import snapshot
-from .llm import structured
+from .llm import structured, used_model
 from .market import get_provider, last_price, pip_size
 from .market_hours import STALE_AFTER_S, market_state
 from .scalp import all_tfs, read as scalp_read
@@ -237,6 +237,7 @@ async def fetch_node(state: AnalysisState) -> dict:
 
 
 async def trend_node(state: AnalysisState) -> dict:
+    s = get_settings()
     snap = state["snapshots"].get(state["trend_tf"])
     if not snap:
         return {"trend": {"bias": "range", "strength": "weak", "key_levels": [],
@@ -246,14 +247,18 @@ async def trend_node(state: AnalysisState) -> dict:
         f"Snapshot:\n{_fmt(snap)}{_mem(state)}"
     )
     try:
-        out: TrendOut = await structured(prompt, TrendOut)
-        return {"trend": out.model_dump(), "trace": [f"trend {state['trend_tf']}: {out.bias}/{out.strength}"]}
+        out: TrendOut = await structured(prompt, TrendOut, model=s.model_for("trend"),
+                                          fallbacks=s.fallbacks_for("trend"))
+        return {"trend": out.model_dump(),
+                "trace": [f"trend {state['trend_tf']}: {out.bias}/{out.strength} "
+                          f"via {used_model() or s.model_for('trend')}"]}
     except Exception as exc:  # noqa: BLE001
         return {"trend": {"bias": "range", "strength": "weak", "key_levels": [],
                           "rationale": f"agen gagal: {exc}"}, "errors": [f"tren: {exc}"]}
 
 
 async def validation_node(state: AnalysisState) -> dict:
+    s = get_settings()
     snap = state["snapshots"].get(state["validation_tf"])
     if not snap:
         return {"validation": {"agrees_with_trend": False, "phase": "consolidation",
@@ -266,9 +271,13 @@ async def validation_node(state: AnalysisState) -> dict:
         f"Snapshot:\n{_fmt(snap)}{_mem(state)}"
     )
     try:
-        out: ValidationOut = await structured(prompt, ValidationOut)
+        out: ValidationOut = await structured(prompt, ValidationOut,
+                                              model=s.model_for("validation"),
+                                              fallbacks=s.fallbacks_for("validation"))
         return {"validation": out.model_dump(),
-                "trace": [f"validation {state['validation_tf']}: {out.phase} agree={out.agrees_with_trend}"]}
+                "trace": [f"validation {state['validation_tf']}: {out.phase} "
+                          f"agree={out.agrees_with_trend} "
+                          f"via {used_model() or s.model_for('validation')}"]}
     except Exception as exc:  # noqa: BLE001
         return {"validation": {"agrees_with_trend": False, "phase": "consolidation",
                                "pattern": "n/a", "invalidation_level": state.get("price", 0.0),
@@ -276,6 +285,7 @@ async def validation_node(state: AnalysisState) -> dict:
 
 
 async def critical_node(state: AnalysisState) -> dict:
+    s = get_settings()
     snap = state["snapshots"].get(state["critical_tf"])
     if not snap:
         return {"critical": {"zones": [], "nearest_support": state.get("price", 0.0),
@@ -289,9 +299,12 @@ async def critical_node(state: AnalysisState) -> dict:
         f"Snapshot:\n{_fmt(snap)}{_mem(state)}"
     )
     try:
-        out: CriticalOut = await structured(prompt, CriticalOut)
+        out: CriticalOut = await structured(prompt, CriticalOut,
+                                            model=s.model_for("critical"),
+                                            fallbacks=s.fallbacks_for("critical"))
         return {"critical": out.model_dump(),
-                "trace": [f"critical {state['critical_tf']}: {len(out.zones)} zones"]}
+                "trace": [f"critical {state['critical_tf']}: {len(out.zones)} zones "
+                          f"via {used_model() or s.model_for('critical')}"]}
     except Exception as exc:  # noqa: BLE001
         return {"critical": {"zones": [], "nearest_support": state.get("price", 0.0),
                              "nearest_resistance": state.get("price", 0.0),
@@ -357,7 +370,9 @@ async def decision_node(state: AnalysisState) -> dict:
         f"Critical:\n{_fmt(state.get('critical', {}))}{scalp_block}{auto_block}{advice_block}{_mem(state)}"
     )
     try:
-        out: DecisionOut = await structured(prompt, DecisionOut)
+        out: DecisionOut = await structured(prompt, DecisionOut,
+                                            model=s.model_for("decision"),
+                                            fallbacks=s.fallbacks_for("decision"))
     except Exception as exc:  # noqa: BLE001
         return {"decision": {"action": "NO_TRADE", "confidence": 0, "reasons": [],
                              "vetoes": [f"agen keputusan gagal: {exc}"]},
@@ -438,4 +453,5 @@ async def decision_node(state: AnalysisState) -> dict:
     )
 
     return {"decision": out.model_dump(), "vetoes": vetoes, "advice": advice_data,
-            "trace": trace + [f"decision: {out.action} conf={out.confidence} rr={out.rr}"]}
+            "trace": trace + [f"decision: {out.action} conf={out.confidence} "
+                               f"rr={out.rr} via {used_model() or s.model_for('decision')}"]}

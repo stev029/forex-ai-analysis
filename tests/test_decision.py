@@ -30,7 +30,7 @@ def _state(**over) -> dict:
 
 
 async def _run(monkeypatch, decision: DecisionOut) -> dict:
-    async def fake(prompt, schema, retries=2):
+    async def fake(prompt, schema, retries=2, model=None, fallbacks=None):
         return decision
 
     monkeypatch.setattr(nodes, "structured", fake)
@@ -39,7 +39,7 @@ async def _run(monkeypatch, decision: DecisionOut) -> dict:
 
 def _fake_decision(decision: DecisionOut):
     """Stub `structured` yang selalu mengembalikan satu DecisionOut."""
-    async def fake(prompt, schema, retries=2):
+    async def fake(prompt, schema, retries=2, model=None, fallbacks=None):
         return decision
 
     return fake

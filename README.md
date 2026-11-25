@@ -17,6 +17,23 @@ Ask for `m1` and the graph resolves:
 Timeframes are resolved by `src/forex_agents/timeframes.py:cascade()`; ladder is
 `m1 m5 m15 m30 h1 h4 d1 w1`, so `m5 → m30/m15/m5`, `h1 → d1/h4/h1` (clamped at the top).
 
+## Model per-tahap
+
+Tiap tahap punya model sendiri (`config.py:Settings.model_for()`), supaya tugas ringan tidak
+membakar model mahal dan tugas berat tetap akurat.
+
+| tahap | sifat tugas | env | contoh |
+|---|---|---|---|
+| trend | ringan: klasifikasi bias + kekuatan | `LLM_MODEL_TREND` | `gemini/gemini-3.5-flash-lite` |
+| validation | ringan: setuju/tidak + fase | `LLM_MODEL_VALIDATION` | `gemini/gemini-3.5-flash-lite` |
+| critical | ringan: zona support/resistance | `LLM_MODEL_CRITICAL` | `gemini/gemini-3.5-flash-lite` |
+| decision | berat: entry, SL, TP, RR, veto | `LLM_MODEL_DECISION` | `abacus/gpt-6-sol` |
+
+Kosong ⇒ jatuh ke `LLM_MODEL`. Rantai fallback (`LLM_FALLBACK_<TAHAP>`, lalu `LLM_FALLBACKS`)
+dicoba berurutan kalau model utama error — berguna saat kuota provider habis. Log mencatat
+`model X gagal (...), fallback ke Y`. Model yang benar-benar dipakai tiap tahap tampil di akhir
+pesan Telegram (`model: ...`) dan di baris `trace`.
+
 ## Timeframe otomatis (`auto`)
 
 `/analyze XAUUSD auto` (atau `--tf auto`, `/schedule add XAUUSD auto`) menyerahkan pemilihan TF
@@ -175,6 +192,12 @@ cp .env.example .env
 ```
 
 - `LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL` — any OpenAI-compatible endpoint (9router default).
+- `LLM_MODEL_TREND` / `LLM_MODEL_VALIDATION` / `LLM_MODEL_CRITICAL` / `LLM_MODEL_DECISION` —
+  model per tahap agent. Kosong ⇒ ikut `LLM_MODEL`. Tahap ringan (tren, validasi, area kritis)
+  pakai model murah; tahap berat (keputusan entry + SL/TP) pakai model kuat.
+- `LLM_FALLBACK_TREND` / `..._VALIDATION` / `..._CRITICAL` / `..._DECISION` dan `LLM_FALLBACKS` —
+  rantai cadangan dipisah koma, dicoba berurutan bila model utama gagal (kuota habis, model tidak
+  ada). Setiap kegagalan tercatat sebagai `WARNING` di log.
 - `DATABASE_URL` — Neon/Supabase/etc. with `?sslmode=require`. Unset ⇒ graph still runs, checkpoints
   and `/history` are skipped.
 - `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOWED_USER_IDS` (comma separated; empty ⇒ open bot).

@@ -213,6 +213,20 @@ def _scalp_lines(scalp: dict, n: int = 5) -> list[str]:
     return out
 
 
+def _model_line(final: dict) -> str:
+    """Ringkas model yang dipakai tiap tahap, dibaca dari trace `via <model>`."""
+    seen: list[str] = []
+    for item in final.get("trace") or []:
+        text = str(item)
+        if " via " in text:
+            name = text.split(" via ", 1)[1].strip()
+            if name and name not in seen:
+                seen.append(name)
+    if not seen:
+        return ""
+    return "model: " + " | ".join(f"<code>{_esc(m)}</code>" for m in seen)
+
+
 def render(final: dict) -> str:
     d = final.get("decision") or {}
     t = final.get("trend") or {}
@@ -295,5 +309,9 @@ def render(final: dict) -> str:
 
     if final.get("errors"):
         lines += ["", "<i>kesalahan:</i>"] + [f"   {_esc(e)}" for e in final["errors"]]
+
+    model_line = _model_line(final)
+    if model_line:
+        lines += ["", f"<i>{model_line}</i>"]
 
     return "\n".join(lines)
